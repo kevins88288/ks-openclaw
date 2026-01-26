@@ -115,8 +115,8 @@ Short version: **keep the Gateway loopback-only** unless you’re sure you need 
 - **Non-loopback binds** (`lan`/`tailnet`/`custom`, or `auto` when loopback is unavailable) must use auth tokens/passwords.
 - `gateway.remote.token` is **only** for remote CLI calls — it does **not** enable local auth.
 - `gateway.remote.tlsFingerprint` pins the remote TLS cert when using `wss://`.
-- **Tailscale Serve** can authenticate via identity headers when `gateway.auth.allowTailscale: true`.
-  Set it to `false` if you want tokens/passwords instead.
+- **Tailscale Serve** only provides HTTPS routing; it does not replace auth. Use a
+  token/password and keep `gateway.auth.allowTailscale: false`.
 - Treat `browser.controlUrl` like an admin API: tailnet-only + token auth.
 
 Deep dive: [Security](/gateway/security).

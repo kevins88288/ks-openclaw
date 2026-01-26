@@ -68,13 +68,9 @@ clawdbot gateway --tailscale serve
 Open:
 - `https://<magicdns>/` (or your configured `gateway.controlUi.basePath`)
 
-By default, Serve requests can authenticate via Tailscale identity headers
-(`tailscale-user-login`) when `gateway.auth.allowTailscale` is `true`. Clawdbot
-verifies the identity by resolving the `x-forwarded-for` address with
-`tailscale whois` and matching it to the header, and only accepts these when the
-request hits loopback with Tailscale’s `x-forwarded-*` headers. Set
-`gateway.auth.allowTailscale: false` (or force `gateway.auth.mode: "password"`)
-if you want to require a token/password even for Serve traffic.
+Serve does **not** replace Gateway auth. Set a token/password (prefer
+`CLAWDBOT_GATEWAY_TOKEN` or `CLAWDBOT_GATEWAY_PASSWORD`) and connect with it.
+Keep `gateway.auth.allowTailscale: false` (legacy option).
 
 ### Bind to tailnet + token
 

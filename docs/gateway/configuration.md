@@ -2867,22 +2867,17 @@ Notes:
 - `gateway.port` controls the single multiplexed port used for WebSocket + HTTP (control UI, hooks, A2UI).
 - OpenAI Chat Completions endpoint: **disabled by default**; enable with `gateway.http.endpoints.chatCompletions.enabled: true`.
 - Precedence: `--port` > `CLAWDBOT_GATEWAY_PORT` > `gateway.port` > default `18789`.
-- Gateway auth is required by default (token/password or Tailscale Serve identity). Non-loopback binds require a shared token/password.
+- Gateway auth is required by default (token/password). Non-loopback binds require a shared token/password.
 - The onboarding wizard generates a gateway token by default (even on loopback).
 - `gateway.remote.token` is **only** for remote CLI calls; it does not enable local gateway auth. `gateway.token` is ignored.
 
 Auth and Tailscale:
 - `gateway.auth.mode` sets the handshake requirements (`token` or `password`). When unset, token auth is assumed.
 - `gateway.auth.token` stores the shared token for token auth (used by the CLI on the same machine).
-- When `gateway.auth.mode` is set, only that method is accepted (plus optional Tailscale headers).
+- When `gateway.auth.mode` is set, only that method is accepted.
 - `gateway.auth.password` can be set here, or via `CLAWDBOT_GATEWAY_PASSWORD` (recommended).
-- `gateway.auth.allowTailscale` allows Tailscale Serve identity headers
-  (`tailscale-user-login`) to satisfy auth when the request arrives on loopback
-  with `x-forwarded-for`, `x-forwarded-proto`, and `x-forwarded-host`. Clawdbot
-  verifies the identity by resolving the `x-forwarded-for` address via
-  `tailscale whois` before accepting it. When `true`, Serve requests do not need
-  a token/password; set `false` to require explicit credentials. Defaults to
-  `true` when `tailscale.mode = "serve"` and auth mode is not `password`.
+- `gateway.auth.allowTailscale` is a legacy option; do not use it for auth.
+  Keep it `false` and require token/password even with Tailscale Serve.
 - `gateway.tailscale.mode: "serve"` uses Tailscale Serve (tailnet only, loopback bind).
 - `gateway.tailscale.mode: "funnel"` exposes the dashboard publicly; requires auth.
 - `gateway.tailscale.resetOnExit` resets Serve/Funnel config on shutdown.

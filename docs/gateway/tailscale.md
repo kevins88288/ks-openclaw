@@ -8,7 +8,7 @@ read_when:
 
 Clawdbot can auto-configure Tailscale **Serve** (tailnet) or **Funnel** (public) for the
 Gateway dashboard and WebSocket port. This keeps the Gateway bound to loopback while
-Tailscale provides HTTPS, routing, and (for Serve) identity headers.
+Tailscale provides HTTPS and routing.
 
 ## Modes
 
@@ -23,16 +23,8 @@ Set `gateway.auth.mode` to control the handshake:
 - `token` (default when `CLAWDBOT_GATEWAY_TOKEN` is set)
 - `password` (shared secret via `CLAWDBOT_GATEWAY_PASSWORD` or config)
 
-When `tailscale.mode = "serve"` and `gateway.auth.allowTailscale` is `true`,
-valid Serve proxy requests can authenticate via Tailscale identity headers
-(`tailscale-user-login`) without supplying a token/password. Clawdbot verifies
-the identity by resolving the `x-forwarded-for` address via the local Tailscale
-daemon (`tailscale whois`) and matching it to the header before accepting it.
-Clawdbot only treats a request as Serve when it arrives from loopback with
-Tailscale’s `x-forwarded-for`, `x-forwarded-proto`, and `x-forwarded-host`
-headers.
-To require explicit credentials, set `gateway.auth.allowTailscale: false` or
-force `gateway.auth.mode: "password"`.
+Tailscale Serve/Funnel do **not** replace Gateway auth. Always require a token
+or password, and keep `gateway.auth.allowTailscale: false` (legacy option).
 
 ## Config examples
 
@@ -42,7 +34,8 @@ force `gateway.auth.mode: "password"`.
 {
   gateway: {
     bind: "loopback",
-    tailscale: { mode: "serve" }
+    tailscale: { mode: "serve" },
+    auth: { mode: "token", token: "your-token", allowTailscale: false }
   }
 }
 ```
@@ -133,7 +126,7 @@ Avoid Funnel for browser control endpoints unless you explicitly want public exp
 ## Tailscale prerequisites + limits
 
 - Serve requires HTTPS enabled for your tailnet; the CLI prompts if it is missing.
-- Serve injects Tailscale identity headers; Funnel does not.
+- Serve injects Tailscale identity headers; Clawdbot does not use them for auth.
 - Funnel requires Tailscale v1.38.3+, MagicDNS, HTTPS enabled, and a funnel node attribute.
 - Funnel only supports ports `443`, `8443`, and `10000` over TLS.
 - Funnel on macOS requires the open-source Tailscale app variant.

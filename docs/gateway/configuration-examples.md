@@ -392,7 +392,7 @@ Save to `~/.clawdbot/clawdbot.json` and you can DM the bot from that number.
     auth: {
       mode: "token",
       token: "gateway-token",
-      allowTailscale: true
+      allowTailscale: false
     },
     tailscale: { mode: "serve", resetOnExit: false },
     remote: { url: "ws://gateway.tailnet:18789", token: "remote-token" },

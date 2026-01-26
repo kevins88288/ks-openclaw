@@ -327,19 +327,13 @@ Rotation checklist (token/password):
 3. Update any remote clients (`gateway.remote.token` / `.password` on machines that call into the Gateway).
 4. Verify you can no longer connect with the old credentials.
 
-### 0.6) Tailscale Serve identity headers
+### 0.6) Tailscale Serve auth
 
-When `gateway.auth.allowTailscale` is `true` (default for Serve), Clawdbot
-accepts Tailscale Serve identity headers (`tailscale-user-login`) as
-authentication. Clawdbot verifies the identity by resolving the
-`x-forwarded-for` address through the local Tailscale daemon (`tailscale whois`)
-and matching it to the header. This only triggers for requests that hit loopback
-and include `x-forwarded-for`, `x-forwarded-proto`, and `x-forwarded-host` as
-injected by Tailscale.
-
-**Security rule:** do not forward these headers from your own reverse proxy. If
-you terminate TLS or proxy in front of the gateway, disable
-`gateway.auth.allowTailscale` and use token/password auth instead.
+Tailscale Serve/Funnel provide HTTPS and routing; they do **not** replace Gateway
+auth. Always require a token/password and keep `gateway.auth.allowTailscale: false`
+(legacy option). If you terminate TLS or proxy in front of the gateway,
+ensure your proxy overwrites `x-forwarded-*` and is listed in
+`gateway.trustedProxies`.
 
 Trusted proxies:
 - If you terminate TLS in front of the Gateway, set `gateway.trustedProxies` to your proxy IPs.

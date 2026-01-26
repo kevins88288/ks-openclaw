@@ -327,7 +327,7 @@ The wizard now opens your browser with a tokenized dashboard URL right after onb
 - The token is the same value as `gateway.auth.token` (or `CLAWDBOT_GATEWAY_TOKEN`) and is stored by the UI after first load.
 
 **Not on localhost:**
-- **Tailscale Serve** (recommended): keep bind loopback, run `clawdbot gateway --tailscale serve`, open `https://<magicdns>/`. If `gateway.auth.allowTailscale` is `true`, identity headers satisfy auth (no token).
+- **Tailscale Serve** (recommended): keep bind loopback, run `clawdbot gateway --tailscale serve`, open `https://<magicdns>/`, and authenticate with your token/password (keep `gateway.auth.allowTailscale: false`).
 - **Tailnet bind**: run `clawdbot gateway --bind tailnet --token "<token>"`, open `http://<tailscale-ip>:18789/`, paste token in dashboard settings.
 - **SSH tunnel**: `ssh -N -L 18789:127.0.0.1:18789 user@host` then open `http://127.0.0.1:18789/?token=...` from `clawdbot dashboard`.
 
@@ -1434,7 +1434,7 @@ Check the basics:
 - Channel health: `clawdbot channels status`
 
 Then verify auth and routing:
-- If you use Tailscale Serve, make sure `gateway.auth.allowTailscale` is set correctly.
+- If you use Tailscale Serve, confirm you’re using token/password auth and `gateway.auth.allowTailscale: false`.
 - If you connect via SSH tunnel, confirm the local tunnel is up and points at the right port.
 - Confirm your allowlists (DM or group) include your account.
 

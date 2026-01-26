@@ -17,10 +17,8 @@ For threat model + hardening guidance (including `clawdbot security audit --deep
 
 ### Node.js Version
 
-Clawdbot requires **Node.js 22.12.0 or later** (LTS). This version includes important security patches:
-
-- CVE-2025-59466: async_hooks DoS vulnerability
-- CVE-2026-21636: Permission model bypass vulnerability
+Clawdbot requires **Node.js 22.12.0 or later** (LTS). Keep Node updated for
+security patches and compatibility fixes.
 
 Verify your Node.js version:
 
@@ -33,14 +31,16 @@ node --version  # Should be v22.12.0 or later
 When running Clawdbot in Docker:
 
 1. The official image runs as a non-root user (`node`) for reduced attack surface
-2. Use `--read-only` flag when possible for additional filesystem protection
+2. Use `--read-only` when possible and provide a writable state volume
 3. Limit container capabilities with `--cap-drop=ALL`
 
 Example secure Docker run:
 
 ```bash
 docker run --read-only --cap-drop=ALL \
-  -v clawdbot-data:/app/data \
+  --tmpfs /tmp \
+  -e CLAWDBOT_STATE_DIR=/data \
+  -v clawdbot-data:/data \
   clawdbot/clawdbot:latest
 ```
 

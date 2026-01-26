@@ -29,7 +29,7 @@ Authentication is enforced at the WebSocket handshake via `connect.params.auth`
 
 - **Localhost**: open `http://127.0.0.1:18789/`. If you see “unauthorized,” run `clawdbot dashboard` and use the tokenized link (`?token=...`).
 - **Token source**: `gateway.auth.token` (or `CLAWDBOT_GATEWAY_TOKEN`); the UI stores it after first load.
-- **Not localhost**: use Tailscale Serve (tokenless if `gateway.auth.allowTailscale: true`), tailnet bind with a token, or an SSH tunnel. See [Web surfaces](/web).
+- **Not localhost**: use Tailscale Serve with a token/password, tailnet bind with a token, or an SSH tunnel. See [Web surfaces](/web).
 
 ## If you see “unauthorized” / 1008
 

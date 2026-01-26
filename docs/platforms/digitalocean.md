@@ -122,8 +122,8 @@ clawdbot gateway restart
 Open: `https://<magicdns>/`
 
 Notes:
-- Serve keeps the Gateway loopback-only and authenticates via Tailscale identity headers.
-- To require token/password instead, set `gateway.auth.allowTailscale: false` or use `gateway.auth.mode: "password"`.
+- Serve keeps the Gateway loopback-only and provides HTTPS routing.
+- You still need gateway auth (token/password). Keep `gateway.auth.allowTailscale: false` and set `gateway.auth.mode` to `token` or `password`.
 
 **Option C: Tailnet bind (no Serve)**
 ```bash
