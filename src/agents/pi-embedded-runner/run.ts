@@ -380,6 +380,13 @@ export async function runEmbeddedPiAgent(
       const applyApiKeyInfo = async (candidate?: string): Promise<void> => {
         apiKeyInfo = await resolveApiKeyForCandidate(candidate);
         const resolvedProfileId = apiKeyInfo.profileId ?? candidate;
+        if (apiKeyInfo.mode === "gcp-adc") {
+          const { resolveGcpAdcToken } = await import("../../providers/gcp-adc-token.js");
+          const gcpToken = await resolveGcpAdcToken();
+          authStorage.setRuntimeApiKey(model.provider, gcpToken.token);
+          lastProfileId = resolvedProfileId;
+          return;
+        }
         if (!apiKeyInfo.apiKey) {
           if (apiKeyInfo.mode !== "aws-sdk") {
             throw new Error(
