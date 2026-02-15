@@ -473,6 +473,90 @@ Rules:
 
 See [Environment](/help/environment) for full precedence and sources.
 
+## Google Cloud Vertex AI MaaS (OpenAI-compatible with ADC)
+
+Vertex AI Model-as-a-Service (MaaS) endpoints support third-party models (Kimi K2, Llama, etc.) via an OpenAI-compatible API but require GCP Application Default Credentials (ADC) instead of static API keys.
+
+ADC authentication automatically uses:
+
+1. `GOOGLE_APPLICATION_CREDENTIALS` env var (service account key file)
+2. Attached service account (if running on GCE, Cloud Run, etc.)
+3. `gcloud` user credentials (local development via `gcloud auth application-default login`)
+
+**Example config:**
+
+```json5
+{
+  agents: {
+    defaults: {
+      model: { primary: "vertex-maas-moonshot/moonshotai/kimi-k2-thinking-maas" },
+      models: {
+        "vertex-maas-moonshot/moonshotai/kimi-k2-thinking-maas": {
+          alias: "Kimi K2 Thinking (Vertex)",
+        },
+      },
+    },
+  },
+  models: {
+    providers: {
+      "vertex-maas-moonshot": {
+        baseUrl: "https://us-central1-aiplatform.googleapis.com/v1beta1/projects/YOUR_PROJECT_ID/locations/us-central1/endpoints/openapi",
+        auth: "gcp-adc",
+        api: "openai-completions",
+        models: [
+          {
+            id: "moonshotai/kimi-k2-thinking-maas",
+            name: "Kimi K2 Thinking (Vertex MaaS)",
+            reasoning: true,
+            input: ["text"],
+            cost: { input: 0.0, output: 0.0, cacheRead: 0.0, cacheWrite: 0.0 },
+            contextWindow: 128000,
+            maxTokens: 16384,
+          },
+        ],
+      },
+    },
+  },
+}
+```
+
+**Authentication:**
+
+- Set `auth: "gcp-adc"` to use Application Default Credentials
+- Tokens are cached for ~1 hour and automatically refreshed
+- No `apiKey` field needed
+
+**Base URL format:**
+
+```
+https://{REGION}-aiplatform.googleapis.com/v1beta1/projects/{PROJECT_ID}/locations/{REGION}/endpoints/openapi
+```
+
+Replace:
+
+- `{PROJECT_ID}`: Your GCP project ID (e.g., "my-project-12345")
+- `{REGION}`: GCP region (e.g., "us-central1" or "global")
+
+**Required Permissions:**
+Ensure the ADC principal (service account or user) has the `aiplatform.endpoints.predict` permission, or assign the broader `roles/aiplatform.user` role.
+
+**Setup ADC:**
+
+```bash
+# Option 1: Service account key file
+export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account-key.json"
+
+# Option 2: User credentials (local dev)
+gcloud auth application-default login
+```
+
+**Notes:**
+
+- Tokens are cached in `~/.openclaw/credentials/gcp-adc.token.json`
+- Cache expires after 1 hour (GCP standard) with a 5-minute safety margin
+- No manual token management needed — refreshes automatically on expiry
+- Works with any Vertex MaaS model that uses the OpenAI chat completions protocol
+
 ## Full reference
 
 For the complete field-by-field reference, see **[Configuration Reference](/gateway/configuration-reference)**.

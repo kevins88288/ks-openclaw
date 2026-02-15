@@ -61,7 +61,13 @@ function resolveProviderAuthOverride(
 ): ModelProviderAuthMode | undefined {
   const entry = resolveProviderConfig(cfg, provider);
   const auth = entry?.auth;
-  if (auth === "api-key" || auth === "aws-sdk" || auth === "oauth" || auth === "token") {
+  if (
+    auth === "api-key" ||
+    auth === "aws-sdk" ||
+    auth === "oauth" ||
+    auth === "token" ||
+    auth === "gcp-adc"
+  ) {
     return auth;
   }
   return undefined;
@@ -129,7 +135,7 @@ export type ResolvedProviderAuth = {
   apiKey?: string;
   profileId?: string;
   source: string;
-  mode: "api-key" | "oauth" | "token" | "aws-sdk";
+  mode: "api-key" | "oauth" | "token" | "aws-sdk" | "gcp-adc";
 };
 
 export async function resolveApiKeyForProvider(params: {
@@ -163,6 +169,9 @@ export async function resolveApiKeyForProvider(params: {
   }
 
   const authOverride = resolveProviderAuthOverride(cfg, provider);
+  if (authOverride === "gcp-adc") {
+    return { mode: "gcp-adc", source: "gcp-adc" };
+  }
   if (authOverride === "aws-sdk") {
     return resolveAwsSdkAuthInfo();
   }
@@ -233,7 +242,14 @@ export async function resolveApiKeyForProvider(params: {
 }
 
 export type EnvApiKeyResult = { apiKey: string; source: string };
-export type ModelAuthMode = "api-key" | "oauth" | "token" | "mixed" | "aws-sdk" | "unknown";
+export type ModelAuthMode =
+  | "api-key"
+  | "oauth"
+  | "token"
+  | "mixed"
+  | "aws-sdk"
+  | "gcp-adc"
+  | "unknown";
 
 export function resolveEnvApiKey(provider: string): EnvApiKeyResult | null {
   const normalized = normalizeProviderId(provider);
@@ -334,6 +350,9 @@ export function resolveModelAuthMode(
   }
 
   const authOverride = resolveProviderAuthOverride(cfg, resolved);
+  if (authOverride === "gcp-adc") {
+    return "gcp-adc";
+  }
   if (authOverride === "aws-sdk") {
     return "aws-sdk";
   }
