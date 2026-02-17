@@ -1,7 +1,8 @@
 /**
  * Job Tracker - Creates and updates BullMQ jobs for agent runs
  * 
- * Hooks into sessions_spawn and agent_end to track job lifecycle
+ * Hooks into sessions_spawn and agent_end to track job lifecycle.
+ * Uses runId as BullMQ jobId for direct lookup — no in-memory maps needed.
  */
 
 import { Queue } from 'bullmq';
@@ -12,8 +13,6 @@ import { createQueueOptions, DEFAULT_JOB_TIMEOUT_MS } from './queue-config.js';
 
 export class JobTracker {
   private queues: Map<string, Queue> = new Map();
-  private jobIdToRunId: Map<string, string> = new Map();
-  private runIdToJobId: Map<string, string> = new Map();
   
   constructor(
     private connection: Redis,
@@ -65,9 +64,6 @@ export class JobTracker {
       timeout: jobData.timeoutMs,
     });
     
-    this.jobIdToRunId.set(job.id!, params.runId);
-    this.runIdToJobId.set(params.runId, job.id!);
-    
     this.logger.info(`job-tracker: created job ${job.id} for ${params.target}`);
     return job.id!;
   }
@@ -78,17 +74,10 @@ export class JobTracker {
     error?: string;
     result?: string;
   }): Promise<void> {
-    const jobId = this.runIdToJobId.get(runId);
-    if (!jobId) {
-      this.logger.warn(`job-tracker: no job found for runId ${runId}`);
-      return;
-    }
-    
-    // Find the queue by iterating through all queues
-    // In Phase 1, we track by runId mapping
+    // runId IS the BullMQ jobId — look up directly in each queue
     for (const queue of this.queues.values()) {
       try {
-        const job = await queue.getJob(jobId);
+        const job = await queue.getJob(runId);
         if (job) {
           const updates: Partial<AgentJob> = {
             status,
@@ -100,15 +89,10 @@ export class JobTracker {
             ...updates,
           });
           
-          this.logger.info(`job-tracker: updated job ${jobId} status to ${status}`);
+          // Phase 2: Worker will handle proper BullMQ lifecycle transitions
+          // (moveToCompleted/moveToFailed require a Worker token we don't have)
           
-          // If completed or failed, mark the job accordingly in BullMQ
-          if (status === 'completed') {
-            await job.moveToCompleted(extras?.result || 'completed', job.token || '0', false);
-          } else if (status === 'failed') {
-            await job.moveToFailed(new Error(extras?.error || 'failed'), job.token || '0', false);
-          }
-          
+          this.logger.info(`job-tracker: updated job ${runId} status to ${status}`);
           return;
         }
       } catch (err) {
@@ -117,18 +101,14 @@ export class JobTracker {
       }
     }
     
-    this.logger.warn(`job-tracker: job ${jobId} not found in any queue`);
+    this.logger.warn(`job-tracker: job ${runId} not found in any queue`);
   }
   
   async findJobByRunId(runId: string): Promise<AgentJob | null> {
-    const jobId = this.runIdToJobId.get(runId);
-    if (!jobId) {
-      return null;
-    }
-    
+    // runId IS the BullMQ jobId — look up directly
     for (const queue of this.queues.values()) {
       try {
-        const job = await queue.getJob(jobId);
+        const job = await queue.getJob(runId);
         if (job) {
           return job.data as AgentJob;
         }
@@ -163,8 +143,6 @@ export class JobTracker {
       await queue.close();
     }
     this.queues.clear();
-    this.jobIdToRunId.clear();
-    this.runIdToJobId.clear();
     this.logger.info('job-tracker: closed all queues');
   }
 }

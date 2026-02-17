@@ -11,11 +11,38 @@ import type Redis from 'ioredis';
 import type { PluginLogger } from "openclaw/plugin-sdk";
 import { Queue } from 'bullmq';
 import { createQueueOptions } from './queue-config.js';
+import { createRedisConnection, closeRedisConnection } from './redis-connection.js';
+import type { PluginState } from '../index.js';
+
+type CliContext = {
+  program: Command;
+  config: any;
+  logger: PluginLogger;
+};
+
+/**
+ * Get a Redis connection — use the shared one if available, otherwise create a temporary one.
+ * Returns [connection, needsClose].
+ */
+function getConnection(state: PluginState, ctx: CliContext): [Redis, boolean] {
+  if (state.connection) {
+    return [state.connection, false];
+  }
+  
+  const pluginConfig = ctx.config.plugins?.['redis-orchestrator'] as any;
+  const redisConfig = {
+    host: pluginConfig?.redis?.host || '127.0.0.1',
+    port: pluginConfig?.redis?.port || 6379,
+    password: pluginConfig?.redis?.password || process.env.REDIS_PASSWORD,
+  };
+  
+  return [createRedisConnection(redisConfig, ctx.logger), true];
+}
 
 export function registerQueueCommands(
   program: Command,
-  connection: Redis,
-  logger: PluginLogger,
+  state: PluginState,
+  ctx: CliContext,
 ): void {
   const queue = program
     .command('queue')
@@ -26,6 +53,7 @@ export function registerQueueCommands(
     .description('Show queue statistics')
     .option('-a, --agent <agentId>', 'Filter by agent ID')
     .action(async (options) => {
+      const [connection, needsClose] = getConnection(state, ctx);
       try {
         const agentId = options.agent;
         const queueNames = agentId 
@@ -74,6 +102,10 @@ export function registerQueueCommands(
       } catch (err) {
         console.error('Error getting queue stats:', err instanceof Error ? err.message : String(err));
         process.exit(1);
+      } finally {
+        if (needsClose) {
+          await closeRedisConnection(connection, ctx.logger);
+        }
       }
     });
   
@@ -84,6 +116,7 @@ export function registerQueueCommands(
     .option('-s, --status <status>', 'Filter by status (wait, active, completed, failed)')
     .option('-l, --limit <number>', 'Limit number of results', '20')
     .action(async (options) => {
+      const [connection, needsClose] = getConnection(state, ctx);
       try {
         const agentId = options.agent;
         const status = options.status || 'active';
@@ -128,6 +161,10 @@ export function registerQueueCommands(
       } catch (err) {
         console.error('Error listing jobs:', err instanceof Error ? err.message : String(err));
         process.exit(1);
+      } finally {
+        if (needsClose) {
+          await closeRedisConnection(connection, ctx.logger);
+        }
       }
     });
   
@@ -136,6 +173,7 @@ export function registerQueueCommands(
     .description('Inspect a specific job')
     .argument('<jobId>', 'Job ID to inspect')
     .action(async (jobId: string) => {
+      const [connection, needsClose] = getConnection(state, ctx);
       try {
         const queueNames = await getQueueNames(connection);
         
@@ -200,6 +238,10 @@ export function registerQueueCommands(
       } catch (err) {
         console.error('Error inspecting job:', err instanceof Error ? err.message : String(err));
         process.exit(1);
+      } finally {
+        if (needsClose) {
+          await closeRedisConnection(connection, ctx.logger);
+        }
       }
     });
 }

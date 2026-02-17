@@ -1,7 +1,9 @@
 /**
  * Plugin Hooks for Redis Orchestrator
  * 
- * Hook into sessions_spawn (after_tool_call) and agent_end to track job lifecycle
+ * Hook into sessions_spawn (after_tool_call) and agent_end to track job lifecycle.
+ * All hooks receive a shared PluginState object and read instances at call time,
+ * avoiding the null-capture bug with JS closures.
  */
 
 import type {
@@ -9,14 +11,12 @@ import type {
   PluginHookToolContext,
   PluginHookAgentEndEvent,
   PluginHookAgentContext,
+  PluginLogger,
 } from "openclaw/plugin-sdk";
-import type { JobTracker } from './job-tracker.js';
-import type { QueueCircuitBreaker } from './circuit-breaker.js';
-import type { PluginLogger } from "openclaw/plugin-sdk";
+import type { PluginState } from '../index.js';
 
 export function createAfterToolCallHook(
-  jobTracker: JobTracker | null,
-  circuitBreaker: QueueCircuitBreaker | null,
+  state: PluginState,
   logger: PluginLogger,
 ) {
   return async (
@@ -28,8 +28,8 @@ export function createAfterToolCallHook(
       return;
     }
     
-    // If Redis is down or not initialized, circuit breaker will handle it
-    if (!jobTracker || !circuitBreaker) {
+    // Read from shared state at call time (not registration time)
+    if (!state.jobTracker || !state.circuitBreaker) {
       return;
     }
     
@@ -49,9 +49,9 @@ export function createAfterToolCallHook(
       }
       
       // Create BullMQ job to track this spawn
-      await circuitBreaker.dispatch(
+      await state.circuitBreaker.dispatch(
         async () => {
-          await jobTracker!.createJob({
+          await state.jobTracker!.createJob({
             target: targetAgent,
             task,
             dispatchedBy: ctx.agentId || 'unknown',
@@ -74,24 +74,18 @@ export function createAfterToolCallHook(
 }
 
 export function createAgentEndHook(
-  jobTracker: JobTracker | null,
-  circuitBreaker: QueueCircuitBreaker | null,
+  state: PluginState,
   logger: PluginLogger,
 ) {
   return async (
     event: PluginHookAgentEndEvent,
     ctx: PluginHookAgentContext,
   ): Promise<void> => {
-    if (!jobTracker || !circuitBreaker) {
+    if (!state.jobTracker || !state.circuitBreaker) {
       return;
     }
     
     try {
-      // We need to find the runId for this session
-      // In Phase 1, we'll rely on the sessionKey being tracked
-      // The runId should be available from the session context
-      
-      // For now, we'll extract from session key if it's a subagent session
       const sessionKey = ctx.sessionKey;
       if (!sessionKey) {
         return;
@@ -107,16 +101,11 @@ export function createAgentEndHook(
       
       const runId = match[1];
       
-      await circuitBreaker.dispatch(
+      await state.circuitBreaker.dispatch(
         async () => {
-          // Update job status to 'announcing'
-          await jobTracker!.updateJobStatus(runId, 'announcing', {
+          await state.jobTracker!.updateJobStatus(runId, 'announcing', {
             startedAt: Date.now(),
           });
-          
-          // Note: We don't mark as 'completed' here because completion means
-          // "result delivered to dispatcher" not "agent finished"
-          // The announce flow completion will update to 'completed'
           
           logger.info(`redis-orchestrator: agent ${ctx.agentId} ended, job ${runId} status -> announcing`);
         },
@@ -132,8 +121,7 @@ export function createAgentEndHook(
 }
 
 export function createSessionsSendRetryHook(
-  jobTracker: JobTracker | null,
-  circuitBreaker: QueueCircuitBreaker | null,
+  state: PluginState,
   logger: PluginLogger,
 ) {
   return async (
@@ -145,7 +133,7 @@ export function createSessionsSendRetryHook(
       return;
     }
     
-    if (!jobTracker || !circuitBreaker) {
+    if (!state.jobTracker || !state.circuitBreaker) {
       return;
     }
     

@@ -19,15 +19,7 @@ export function createRedisConnection(config: RedisConfig, logger: PluginLogger)
     port: config.port,
     password: config.password,
     maxRetriesPerRequest: null, // Required by BullMQ
-    enableReadyCheck: false,
-    retryStrategy: (times: number) => {
-      if (times > 10) {
-        logger.error('redis: max connection retries exceeded');
-        return null; // Stop retrying
-      }
-      const delay = Math.min(times * 100, 3000);
-      return delay;
-    },
+    retryStrategy: (times: number) => Math.min(times * 500, 30_000),
   });
 
   connection.on('error', (err) => {

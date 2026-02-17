@@ -1,7 +1,8 @@
 /**
  * Redis Orchestrator Service
  * 
- * Main service that coordinates job tracking, hooks, and recovery
+ * Main service that coordinates job tracking, hooks, and recovery.
+ * Populates/cleans up the shared PluginState so hooks can access instances.
  */
 
 import type { OpenClawPluginService, OpenClawPluginServiceContext } from "openclaw/plugin-sdk";
@@ -12,13 +13,11 @@ import { QueueCircuitBreaker } from './circuit-breaker.js';
 import { JobTracker } from './job-tracker.js';
 import { DLQAlerter } from './dlq-alerting.js';
 import { createQueueOptions } from './queue-config.js';
+import type { PluginState } from '../index.js';
 
-export function createRedisOrchestratorService(): OpenClawPluginService {
-  let connection: Redis | null = null;
-  let circuitBreaker: QueueCircuitBreaker | null = null;
-  let jobTracker: JobTracker | null = null;
-  let dlqAlerter: DLQAlerter | null = null;
-  let queueEvents: Map<string, QueueEvents> = new Map();
+export function createRedisOrchestratorService(state: PluginState): OpenClawPluginService {
+  let queueEventsMap: Map<string, QueueEvents> = new Map();
+  let dlqQueuesMap: Map<string, Queue> = new Map();
   
   return {
     id: 'redis-orchestrator',
@@ -34,7 +33,7 @@ export function createRedisOrchestratorService(): OpenClawPluginService {
       const redisConfig = {
         host: pluginConfig?.redis?.host || '127.0.0.1',
         port: pluginConfig?.redis?.port || 6379,
-        password: pluginConfig?.redis?.password,
+        password: pluginConfig?.redis?.password || process.env.REDIS_PASSWORD,
       };
       
       const circuitBreakerConfig = {
@@ -44,7 +43,7 @@ export function createRedisOrchestratorService(): OpenClawPluginService {
       
       try {
         // Initialize Redis connection
-        connection = createRedisConnection(redisConfig, ctx.logger);
+        const connection = createRedisConnection(redisConfig, ctx.logger);
         
         // Wait for Redis to be ready
         await new Promise<void>((resolve, reject) => {
@@ -52,12 +51,12 @@ export function createRedisOrchestratorService(): OpenClawPluginService {
             reject(new Error('Redis connection timeout'));
           }, 10000);
           
-          connection!.once('ready', () => {
+          connection.once('ready', () => {
             clearTimeout(timeout);
             resolve();
           });
           
-          connection!.once('error', (err) => {
+          connection.once('error', (err) => {
             clearTimeout(timeout);
             reject(err);
           });
@@ -65,16 +64,17 @@ export function createRedisOrchestratorService(): OpenClawPluginService {
         
         ctx.logger.info('redis-orchestrator: Redis connection established');
         
-        // Initialize components
-        circuitBreaker = new QueueCircuitBreaker(circuitBreakerConfig, ctx.logger);
-        jobTracker = new JobTracker(connection, ctx.logger);
-        dlqAlerter = new DLQAlerter(ctx.logger);
+        // Populate shared state — hooks read from this at call time
+        state.connection = connection;
+        state.circuitBreaker = new QueueCircuitBreaker(circuitBreakerConfig, ctx.logger);
+        state.jobTracker = new JobTracker(connection, ctx.logger);
+        state.dlqAlerter = new DLQAlerter(ctx.logger);
         
         // Set up DLQ event listeners for all agent queues
-        await setupDLQListeners(connection, dlqAlerter, ctx, queueEvents);
+        await setupDLQListeners(connection, state.dlqAlerter, ctx, queueEventsMap, dlqQueuesMap);
         
         // Recover interrupted jobs on startup (Task 1.11)
-        await recoverInterruptedJobs(connection, jobTracker, ctx);
+        await recoverInterruptedJobs(connection, state.jobTracker, ctx);
         
         ctx.logger.info('redis-orchestrator: service started');
         
@@ -87,22 +87,31 @@ export function createRedisOrchestratorService(): OpenClawPluginService {
     
     async stop(ctx: OpenClawPluginServiceContext) {
       // Close all queue event listeners
-      for (const events of queueEvents.values()) {
+      for (const events of queueEventsMap.values()) {
         await events.close();
       }
-      queueEvents.clear();
+      queueEventsMap.clear();
+      
+      // Close DLQ queue instances
+      for (const queue of dlqQueuesMap.values()) {
+        await queue.close();
+      }
+      dlqQueuesMap.clear();
       
       // Close job tracker (closes all queues)
-      if (jobTracker) {
-        await jobTracker.close();
-        jobTracker = null;
+      if (state.jobTracker) {
+        await state.jobTracker.close();
+        state.jobTracker = null;
       }
       
       // Close Redis connection
-      if (connection) {
-        await closeRedisConnection(connection, ctx.logger);
-        connection = null;
+      if (state.connection) {
+        await closeRedisConnection(state.connection, ctx.logger);
+        state.connection = null;
       }
+      
+      state.circuitBreaker = null;
+      state.dlqAlerter = null;
       
       ctx.logger.info('redis-orchestrator: service stopped');
     },
@@ -113,41 +122,54 @@ async function setupDLQListeners(
   connection: Redis,
   dlqAlerter: DLQAlerter,
   ctx: OpenClawPluginServiceContext,
-  queueEvents: Map<string, QueueEvents>,
+  queueEventsMap: Map<string, QueueEvents>,
+  dlqQueuesMap: Map<string, Queue>,
 ): Promise<void> {
-  // Listen for failed jobs across all agent queues
-  // In Phase 1, we set up listeners for common agents
-  const agents = ['jarvis', 'iris', 'groot', 'ultron', 'vision', 'alfred', 'lucius'];
+  // Dynamic agent discovery from config
+  const agents = ((ctx.config as any).agents?.list || [])
+    .map((a: any) => a.id)
+    .filter((id: string) => id !== 'main');
+  
+  if (agents.length === 0) {
+    ctx.logger.warn('redis-orchestrator: no agents found in config, DLQ listeners not set up');
+    return;
+  }
   
   for (const agentId of agents) {
     const queueName = `agent:${agentId}`;
+    
+    // QueueEvents only needs connection and prefix — not full queue options
     const events = new QueueEvents(queueName, {
+      connection,
+      prefix: 'bull',
+    });
+    
+    // Prevent unhandled EventEmitter errors from crashing the process
+    events.on('error', (err) => {
+      ctx.logger.warn(`redis-orchestrator: QueueEvents error for ${queueName}: ${err.message}`);
+    });
+    
+    // Create one reusable Queue instance per agent for DLQ lookups
+    const queue = new Queue(queueName, {
       connection,
       ...createQueueOptions(),
     });
+    dlqQueuesMap.set(queueName, queue);
     
     events.on('failed', async ({ jobId, failedReason }) => {
       try {
-        // Get the job details
-        const queue = new Queue(queueName, {
-          connection,
-          ...createQueueOptions(),
-        });
-        
         const job = await queue.getJob(jobId);
         
         if (job && job.attemptsMade >= (job.opts.attempts || 3)) {
           // Job has exhausted all retries - send DLQ alert
           await dlqAlerter.sendAlert(job, failedReason);
         }
-        
-        await queue.close();
       } catch (err) {
         ctx.logger.warn(`Failed to handle DLQ alert for job ${jobId}: ${err instanceof Error ? err.message : String(err)}`);
       }
     });
     
-    queueEvents.set(queueName, events);
+    queueEventsMap.set(queueName, events);
   }
   
   ctx.logger.info(`redis-orchestrator: DLQ listeners set up for ${agents.length} agents`);
@@ -194,20 +216,4 @@ async function recoverInterruptedJobs(
   } catch (err) {
     ctx.logger.warn(`redis-orchestrator: recovery check failed: ${err instanceof Error ? err.message : String(err)}`);
   }
-}
-
-// Export shared instances for hooks to access
-export let sharedConnection: Redis | null = null;
-export let sharedCircuitBreaker: QueueCircuitBreaker | null = null;
-export let sharedJobTracker: JobTracker | null = null;
-
-// These will be set by the plugin's register function
-export function setSharedInstances(
-  connection: Redis,
-  breaker: QueueCircuitBreaker,
-  tracker: JobTracker,
-): void {
-  sharedConnection = connection;
-  sharedCircuitBreaker = breaker;
-  sharedJobTracker = tracker;
 }

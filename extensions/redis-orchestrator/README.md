@@ -32,24 +32,36 @@ Add to your OpenClaw config:
 ```json5
 {
   plugins: {
-    'redis-orchestrator': {
-      enabled: true,
-      redis: {
-        host: '127.0.0.1',
-        port: 6379,
-        password: '', // Optional
-      },
-      circuitBreaker: {
-        failureThreshold: 5,
-        resetTimeout: 30000, // 30 seconds
-      },
-      dlq: {
-        alertChannel: 'discord',
+    entries: {
+      'redis-orchestrator': {
+        enabled: true,
+        config: {
+          redis: {
+            host: '127.0.0.1',
+            port: 6379,
+            password: '...', // Or set REDIS_PASSWORD env var
+          },
+          circuitBreaker: {
+            failureThreshold: 5,
+            resetTimeout: 30000, // 30 seconds
+          },
+          dlq: {
+            alertChannel: 'discord',
+          },
+        },
       },
     },
   },
 }
 ```
+
+#### Redis Authentication
+
+Set the Redis password via either:
+1. Config: `plugins.entries.redis-orchestrator.config.redis.password`
+2. Environment variable: `REDIS_PASSWORD`
+
+The config value takes precedence over the environment variable.
 
 ### Redis Setup
 
@@ -168,10 +180,12 @@ callGateway (injection layer)
 The plugin is implemented as an OpenClaw extension in the `extensions/` directory. It uses the plugin SDK to register hooks, services, and CLI commands.
 
 Key hooks:
-- `gateway_start` - Initialize Redis connection and shared instances
 - `after_tool_call` - Track `sessions_spawn` and `sessions_send` calls
 - `agent_end` - Update job status when agent finishes
-- `gateway_stop` - Cleanup connections
+
+Service lifecycle (handled by the registered service, not hooks):
+- `start()` - Initialize Redis connection, job tracker, circuit breaker
+- `stop()` - Cleanup connections and shared state
 
 ### Troubleshooting
 
