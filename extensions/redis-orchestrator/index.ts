@@ -50,7 +50,7 @@ const plugin: OpenClawPluginDefinition = {
   description: "BullMQ-based orchestration layer for durable agent job tracking",
   version: "1.0.0",
 
-  async register(api: OpenClawPluginApi) {
+  register(api: OpenClawPluginApi) {
     api.logger.info("redis-orchestrator: registering plugin");
 
     // Register the background service — it owns init/teardown of shared state

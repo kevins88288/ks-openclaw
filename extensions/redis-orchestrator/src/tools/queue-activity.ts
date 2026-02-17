@@ -64,7 +64,7 @@ export function createQueueActivityTool(
 
         // Query each agent queue
         for (const agentId of allAgents) {
-          const queueName = `agent:${agentId}`;
+          const queueName = `agent-${agentId}`;
           const queue = state.jobTracker.getOrCreateQueue(queueName);
 
           // Get counts using O(1) operation

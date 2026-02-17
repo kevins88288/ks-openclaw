@@ -50,7 +50,7 @@ export function registerQueueCommands(program: Command, state: PluginState, ctx:
       const [connection, needsClose] = getConnection(state, ctx);
       try {
         const agentId = options.agent;
-        const queueNames = agentId ? [`agent:${agentId}`] : await getQueueNames(connection);
+        const queueNames = agentId ? [`agent-${agentId}`] : await getQueueNames(connection);
 
         console.log("Queue Statistics:\n");
 
@@ -114,7 +114,7 @@ export function registerQueueCommands(program: Command, state: PluginState, ctx:
         const status = options.status || "active";
         const limit = parseInt(options.limit, 10);
 
-        const queueNames = agentId ? [`agent:${agentId}`] : await getQueueNames(connection);
+        const queueNames = agentId ? [`agent-${agentId}`] : await getQueueNames(connection);
 
         console.log(`Jobs (status: ${status}):\n`);
 
@@ -237,10 +237,10 @@ export function registerQueueCommands(program: Command, state: PluginState, ctx:
 }
 
 async function getQueueNames(connection: RedisConnection): Promise<string[]> {
-  const keys: string[] = await connection.keys("bull:agent:*:meta");
+  const keys: string[] = await connection.keys("bull:agent-*:meta");
   return keys
     .map((key: string) => {
-      const match = key.match(/bull:(agent:[^:]+):/);
+      const match = key.match(/bull:(agent-[^-]+):/);
       return match ? match[1] : null;
     })
     .filter((name: string | null): name is string => name !== null);

@@ -289,7 +289,7 @@ async function processJob(
 
   // 14. Index by session key so agent_end hook can find this job
   if (jobTracker && job.id) {
-    await jobTracker.indexJobBySessionKey(childSessionKey, job.id, `agent:${targetAgentId}`);
+    await jobTracker.indexJobBySessionKey(childSessionKey, job.id, `agent-${targetAgentId}`);
   }
 
   logger.info(
@@ -316,7 +316,7 @@ export function createWorkers(
   const workerOpts = createWorkerOptions();
 
   for (const agentId of agentIds) {
-    const queueName = `agent:${agentId}`;
+    const queueName = `agent-${agentId}`;
 
     const worker = new Worker<AgentJob, string>(queueName, async (job) => processJob(job, logger, jobTracker), {
       connection: asBullMQConnection(connection),

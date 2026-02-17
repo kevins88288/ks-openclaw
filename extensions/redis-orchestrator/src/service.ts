@@ -26,12 +26,15 @@ export function createRedisOrchestratorService(state: PluginState): OpenClawPlug
     id: "redis-orchestrator",
 
     async start(ctx: OpenClawPluginServiceContext) {
-      const pluginConfig = (ctx.config.plugins as any)?.["redis-orchestrator"];
+      const pluginEntry = (ctx.config.plugins as any)?.entries?.["redis-orchestrator"];
 
-      if (pluginConfig?.enabled === false) {
+      if (pluginEntry?.enabled === false) {
         ctx.logger.info("redis-orchestrator: disabled by config");
         return;
       }
+
+      // Plugin config lives under entries.<id>.config in OpenClaw's config structure
+      const pluginConfig = pluginEntry?.config;
 
       const redisConfig = {
         host: pluginConfig?.redis?.host || "127.0.0.1",
@@ -152,7 +155,7 @@ async function setupDLQListeners(
   }
 
   for (const agentId of agents) {
-    const queueName = `agent:${agentId}`;
+    const queueName = `agent-${agentId}`;
 
     // QueueEvents only needs connection and prefix — not full queue options
     const bmConn = asBullMQConnection(connection);

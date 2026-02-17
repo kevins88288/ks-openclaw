@@ -119,7 +119,7 @@ export function createQueueListTool(
 
         // Query each agent queue
         for (const agentId of agentIds) {
-          const queueName = `agent:${agentId}`;
+          const queueName = `agent-${agentId}`;
           const queue = state.jobTracker.getOrCreateQueue(queueName);
 
           for (const bullState of bullMQStates) {

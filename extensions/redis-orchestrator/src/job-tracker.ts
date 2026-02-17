@@ -20,7 +20,7 @@ export class JobTracker {
   ) {}
 
   private getQueueForAgent(agentId: string): Queue {
-    const queueName = `agent:${agentId}`;
+    const queueName = `agent-${agentId}`;
 
     if (!this.queues.has(queueName)) {
       const queue = new Queue(queueName, {
