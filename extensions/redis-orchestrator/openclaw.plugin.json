@@ -1,0 +1,51 @@
+{
+  "id": "redis-orchestrator",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "default": true
+      },
+      "redis": {
+        "type": "object",
+        "properties": {
+          "host": {
+            "type": "string",
+            "default": "127.0.0.1"
+          },
+          "port": {
+            "type": "number",
+            "default": 6379
+          },
+          "password": {
+            "type": "string"
+          }
+        }
+      },
+      "circuitBreaker": {
+        "type": "object",
+        "properties": {
+          "failureThreshold": {
+            "type": "number",
+            "default": 5
+          },
+          "resetTimeout": {
+            "type": "number",
+            "default": 30000
+          }
+        }
+      },
+      "dlq": {
+        "type": "object",
+        "properties": {
+          "alertChannel": {
+            "type": "string",
+            "default": "discord"
+          }
+        }
+      }
+    }
+  }
+}
