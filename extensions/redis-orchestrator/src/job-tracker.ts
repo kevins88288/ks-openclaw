@@ -107,6 +107,7 @@ export class JobTracker {
   // ---------------------------------------------------------------------------
 
   private static readonly JOB_INDEX_KEY = "bull:job-index";
+  private static readonly SESSION_INDEX_KEY = "bull:session-index";
 
   private async indexJob(jobId: string, queueName: string): Promise<void> {
     try {
@@ -142,6 +143,66 @@ export class JobTracker {
       this.queues.set(queueName, queue);
     }
     return this.queues.get(queueName)!;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Session key index — O(1) sessionKey → job lookup (Phase 2 Worker-created jobs)
+  // ---------------------------------------------------------------------------
+
+  async indexJobBySessionKey(sessionKey: string, jobId: string, queueName: string): Promise<void> {
+    try {
+      // Store both jobId and queueName so we can look up directly
+      await this.connection.hset(
+        JobTracker.SESSION_INDEX_KEY,
+        sessionKey,
+        JSON.stringify({ jobId, queueName }),
+      );
+    } catch (err) {
+      this.logger.warn(
+        `job-tracker: failed to index job by session ${sessionKey}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  async findJobBySessionKey(sessionKey: string): Promise<AgentJob | null> {
+    try {
+      const raw = await this.connection.hget(JobTracker.SESSION_INDEX_KEY, sessionKey);
+      if (!raw) return null;
+      const { jobId, queueName } = JSON.parse(raw);
+      const queue = this.getOrCreateQueue(queueName);
+      const job = await queue.getJob(jobId);
+      return job ? (job.data as AgentJob) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async updateJobBySessionKey(
+    sessionKey: string,
+    status: AgentJob["status"],
+    extras?: { completedAt?: number; error?: string; result?: string },
+  ): Promise<boolean> {
+    try {
+      const raw = await this.connection.hget(JobTracker.SESSION_INDEX_KEY, sessionKey);
+      if (!raw) {
+        this.logger.warn(`job-tracker: no job found for session ${sessionKey}`);
+        return false;
+      }
+      const { jobId, queueName } = JSON.parse(raw);
+      const queue = this.getOrCreateQueue(queueName);
+      const job = await queue.getJob(jobId);
+      if (job) {
+        await job.updateData({ ...job.data, status, ...extras });
+        this.logger.info(`job-tracker: updated job ${jobId} via session index to ${status}`);
+        return true;
+      }
+      return false;
+    } catch (err) {
+      this.logger.warn(
+        `job-tracker: error updating job by session ${sessionKey}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return false;
+    }
   }
 
   async updateJobStatus(

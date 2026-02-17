@@ -15,6 +15,7 @@ import { createQueueOptions } from "./queue-config.js";
 import { asBullMQConnection, type RedisConnection } from "./redis-connection.js";
 import { createRedisConnection, closeRedisConnection } from "./redis-connection.js";
 import { createWorkers, closeWorkers } from "./worker.js";
+import { listAgentIds } from "../../../src/agents/agent-scope.js";
 
 export function createRedisOrchestratorService(state: PluginState): OpenClawPluginService {
   let queueEventsMap: Map<string, QueueEvents> = new Map();
@@ -79,12 +80,10 @@ export function createRedisOrchestratorService(state: PluginState): OpenClawPlug
         await recoverInterruptedJobs(connection, state.jobTracker, ctx);
 
         // Phase 2: Start BullMQ Workers for each agent queue
-        const agentIds = ((ctx.config as any).agents?.list || [])
-          .map((a: any) => a.id)
-          .filter((id: string) => id !== "main");
+        const agentIds = listAgentIds(ctx.config).filter((id: string) => id !== "main");
 
         if (agentIds.length > 0) {
-          workersMap = createWorkers(connection, agentIds, ctx.logger);
+          workersMap = createWorkers(connection, agentIds, ctx.logger, state.jobTracker);
           ctx.logger.info(`redis-orchestrator: started ${workersMap.size} workers`);
         }
 
@@ -145,9 +144,7 @@ async function setupDLQListeners(
   dlqQueuesMap: Map<string, Queue>,
 ): Promise<void> {
   // Dynamic agent discovery from config
-  const agents = ((ctx.config as any).agents?.list || [])
-    .map((a: any) => a.id)
-    .filter((id: string) => id !== "main");
+  const agents = listAgentIds(ctx.config).filter((id: string) => id !== "main");
 
   if (agents.length === 0) {
     ctx.logger.warn("redis-orchestrator: no agents found in config, DLQ listeners not set up");
@@ -209,12 +206,12 @@ async function recoverInterruptedJobs(
     const stats = await jobTracker.getQueueStats();
 
     let activeCount = 0;
-    let announcingCount = 0;
+    let markedFailed = 0;
 
     for (const [queueName, counts] of Object.entries(stats)) {
       activeCount += (counts as any).active || 0;
 
-      // Check for jobs that were in 'announcing' state when gateway stopped
+      // Check for jobs that were in 'announcing' or 'active' state when gateway stopped
       const queue = new Queue(queueName, {
         connection: asBullMQConnection(connection),
         ...createQueueOptions(),
@@ -223,20 +220,25 @@ async function recoverInterruptedJobs(
       const activeJobs = await queue.getJobs(["active"]);
 
       for (const job of activeJobs) {
-        if (job.data.status === "announcing") {
-          announcingCount++;
-          // TODO: Resume announce flow for this job
-          // This will be implemented in Phase 1 once we have the announce hook
-          ctx.logger.info(`redis-orchestrator: found interrupted announcing job ${job.id}`);
+        if (job.data.status === "announcing" || job.data.status === "active") {
+          // Mark as failed — the agent session may have been lost during restart
+          await job.updateData({
+            ...job.data,
+            status: "failed",
+            error: "Gateway restart during execution — job state unknown",
+            completedAt: Date.now(),
+          });
+          ctx.logger.info(`redis-orchestrator: marked interrupted job ${job.id} as failed`);
+          markedFailed++;
         }
       }
 
       await queue.close();
     }
 
-    if (activeCount > 0 || announcingCount > 0) {
+    if (activeCount > 0 || markedFailed > 0) {
       ctx.logger.info(
-        `redis-orchestrator: recovered ${activeCount} active jobs, ${announcingCount} announcing jobs`,
+        `redis-orchestrator: recovered ${activeCount} active jobs, marked ${markedFailed} as failed`,
       );
     }
   } catch (err) {

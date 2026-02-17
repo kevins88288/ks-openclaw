@@ -10,8 +10,10 @@ import type { AnyAgentTool } from "../../../../src/agents/tools/common.js";
 import { jsonResult, readStringParam, readNumberParam } from "../../../../src/agents/tools/common.js";
 import { normalizeAgentId } from "../../../../src/routing/session-key.js";
 import { loadConfig } from "../../../../src/config/config.js";
+import { listAgentIds } from "../../../../src/agents/agent-scope.js";
 import type { PluginState } from "../../index.js";
 import type { AgentJob } from "../types.js";
+import { formatRelativeTime, truncateTask } from "../utils.js";
 
 const QueueListSchema = Type.Object({
   agent: Type.Optional(Type.String({ description: "Filter by agent ID (optional)" })),
@@ -54,25 +56,6 @@ function mapStatusToBullMQ(status?: string): BullMQJobStatus[] {
   }
 }
 
-function formatRelativeTime(timestampMs: number): string {
-  const now = Date.now();
-  const diffMs = now - timestampMs;
-  const diffSec = Math.floor(diffMs / 1000);
-  const diffMin = Math.floor(diffSec / 60);
-  const diffHour = Math.floor(diffMin / 60);
-  const diffDay = Math.floor(diffHour / 24);
-
-  if (diffSec < 60) return `${diffSec}s ago`;
-  if (diffMin < 60) return `${diffMin}m ago`;
-  if (diffHour < 24) return `${diffHour}h ago`;
-  return `${diffDay}d ago`;
-}
-
-function truncateTask(task: string, maxLength = 80): string {
-  if (task.length <= maxLength) return task;
-  return task.substring(0, maxLength - 3) + "...";
-}
-
 export function createQueueListTool(
   state: PluginState,
   ctx: OpenClawPluginToolContext,
@@ -107,9 +90,7 @@ export function createQueueListTool(
         agentIds.push(normalizeAgentId(agentFilter));
       } else {
         // Query all agents from config
-        const allAgents = ((cfg as any).agents?.list || [])
-          .map((a: any) => a.id)
-          .filter((id: string) => id !== "main");
+        const allAgents = listAgentIds(cfg).filter((id: string) => id !== "main");
         agentIds.push(...allAgents);
       }
 
@@ -130,8 +111,10 @@ export function createQueueListTool(
           task: string;
           status: string;
           queuedAt: string;
+          queuedAtMs: number;
           startedAt?: string;
           completedAt?: string;
+          label?: string;
         }> = [];
 
         // Query each agent queue
@@ -152,6 +135,7 @@ export function createQueueListTool(
                 task: truncateTask(jobData.task),
                 status: jobData.status,
                 queuedAt: formatRelativeTime(jobData.queuedAt),
+                queuedAtMs: jobData.queuedAt,
               };
 
               if (jobData.startedAt) {
@@ -175,9 +159,15 @@ export function createQueueListTool(
           if (allJobs.length >= cappedLimit) break;
         }
 
+        // Sort by queuedAt timestamp descending (newest first)
+        allJobs.sort((a, b) => b.queuedAtMs - a.queuedAtMs);
+
+        // Remove raw timestamp from output
+        const jobs = allJobs.map(({ queuedAtMs, ...job }) => job);
+
         return jsonResult({
-          jobs: allJobs,
-          count: allJobs.length,
+          jobs,
+          count: jobs.length,
           limit: cappedLimit,
         });
       } catch (err) {

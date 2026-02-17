@@ -9,8 +9,22 @@
  * The announce pipeline handles delivery independently.
  */
 
+/**
+ * ARCHITECTURE: Dispatch Queue Model (Option B)
+ * 
+ * BullMQ job lifecycle represents DISPATCH, not agent work:
+ * - BullMQ "completed" = child session successfully launched
+ * - BullMQ "failed" = child session failed to launch (will retry)
+ * 
+ * Actual agent lifecycle is tracked in job.data.status:
+ * - "queued" → "active" (Worker launched child) → "completed"/"failed" (agent_end hook)
+ * 
+ * The existing announce pipeline handles result delivery back to the
+ * dispatcher's session. The agent_end hook updates job.data.status as the ack.
+ */
+
 import type { PluginLogger } from "openclaw/plugin-sdk";
-import { Worker, type Job } from "bullmq";
+import { Worker, UnrecoverableError, type Job } from "bullmq";
 import crypto from "node:crypto";
 import type { AgentJob } from "./types.js";
 import { resolveAgentConfig } from "../../../src/agents/agent-scope.js";
@@ -34,6 +48,7 @@ import { normalizeAgentId, parseAgentSessionKey } from "../../../src/routing/ses
 import { normalizeDeliveryContext } from "../../../src/utils/delivery-context.js";
 import { createWorkerOptions } from "./queue-config.js";
 import { asBullMQConnection, type RedisConnection } from "./redis-connection.js";
+import type { JobTracker } from "./job-tracker.js";
 
 // ---------------------------------------------------------------------------
 // Model helpers (replicated from sessions-spawn-tool.ts)
@@ -54,7 +69,11 @@ function normalizeModelSelection(value: unknown): string | undefined {
 // Job processor
 // ---------------------------------------------------------------------------
 
-async function processJob(job: Job<AgentJob>, logger: PluginLogger): Promise<string> {
+async function processJob(
+  job: Job<AgentJob>,
+  logger: PluginLogger,
+  jobTracker: JobTracker | null,
+): Promise<string> {
   const {
     target,
     task,
@@ -100,8 +119,8 @@ async function processJob(job: Job<AgentJob>, logger: PluginLogger): Promise<str
   const maxSpawnDepth = cfg.agents?.defaults?.subagents?.maxSpawnDepth ?? 1;
 
   if (callerDepth >= maxSpawnDepth) {
-    throw new Error(
-      `Depth limit exceeded (current: ${callerDepth}, max: ${maxSpawnDepth}). Job will not retry.`,
+    throw new UnrecoverableError(
+      `Depth limit exceeded (current: ${callerDepth}, max: ${maxSpawnDepth})`,
     );
   }
 
@@ -130,8 +149,8 @@ async function processJob(job: Job<AgentJob>, logger: PluginLogger): Promise<str
         .map((v) => normalizeAgentId(v).toLowerCase()),
     );
     if (!allowAny && !allowSet.has(normalizedTargetId)) {
-      throw new Error(
-        `Target agent "${targetAgentId}" not in allowAgents for ${requesterAgentId}. Job will not retry.`,
+      throw new UnrecoverableError(
+        `Target agent "${targetAgentId}" not in allowAgents for ${requesterAgentId}`,
       );
     }
   }
@@ -268,6 +287,11 @@ async function processJob(job: Job<AgentJob>, logger: PluginLogger): Promise<str
     startedAt: Date.now(),
   });
 
+  // 14. Index by session key so agent_end hook can find this job
+  if (jobTracker && job.id) {
+    await jobTracker.indexJobBySessionKey(childSessionKey, job.id, `agent:${targetAgentId}`);
+  }
+
   logger.info(
     `worker: launched child session ${childSessionKey} (runId: ${childRunId}) for job ${job.id}`,
   );
@@ -286,6 +310,7 @@ export function createWorkers(
   connection: RedisConnection,
   agentIds: string[],
   logger: PluginLogger,
+  jobTracker: JobTracker | null,
 ): Map<string, Worker> {
   const workers = new Map<string, Worker>();
   const workerOpts = createWorkerOptions();
@@ -293,7 +318,7 @@ export function createWorkers(
   for (const agentId of agentIds) {
     const queueName = `agent:${agentId}`;
 
-    const worker = new Worker<AgentJob, string>(queueName, async (job) => processJob(job, logger), {
+    const worker = new Worker<AgentJob, string>(queueName, async (job) => processJob(job, logger, jobTracker), {
       connection: asBullMQConnection(connection),
       ...workerOpts,
       prefix: "bull",

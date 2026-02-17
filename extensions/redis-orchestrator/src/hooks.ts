@@ -86,27 +86,23 @@ export function createAgentEndHook(
     }
     
     try {
+      // Try session key index first (Phase 2 jobs)
       const sessionKey = ctx.sessionKey;
       if (!sessionKey) {
         return;
       }
       
-      // Subagent sessions have format: agent:{agentId}:subagent:{uuid}
-      // The uuid is the runId
-      const match = sessionKey.match(/agent:[^:]+:subagent:([^:]+)/);
-      if (!match) {
-        // Not a subagent session, nothing to track
+      // Check if this is a subagent session
+      const isSubagent = /agent:[^:]+:subagent:/.test(sessionKey);
+      if (!isSubagent) {
         return;
       }
-      
-      const runId = match[1];
 
       // Phase 2: Determine final status based on agent_end event
       const finalStatus = event.success ? 'completed' as const : 'failed' as const;
       const extras: {
         completedAt: number;
         error?: string;
-        startedAt?: number;
       } = {
         completedAt: Date.now(),
       };
@@ -117,14 +113,30 @@ export function createAgentEndHook(
       
       await state.circuitBreaker.dispatch(
         async () => {
-          await state.jobTracker!.updateJobStatus(runId, finalStatus, extras);
-          
-          logger.info(
-            `redis-orchestrator: agent ${ctx.agentId} ended (${finalStatus}), job ${runId} status updated`,
+          // Try session key index (works for Phase 2 Worker-created jobs)
+          const updated = await state.jobTracker!.updateJobBySessionKey(
+            sessionKey,
+            finalStatus,
+            extras,
           );
+          
+          // Fallback: try runId extraction (works for Phase 1 sessions_spawn jobs)
+          if (!updated) {
+            const match = sessionKey.match(/agent:[^:]+:subagent:([^:]+)/);
+            if (match) {
+              await state.jobTracker!.updateJobStatus(match[1], finalStatus, extras);
+              logger.info(
+                `redis-orchestrator: agent ${ctx.agentId} ended (${finalStatus}), job ${match[1]} status updated via runId fallback`,
+              );
+            }
+          } else {
+            logger.info(
+              `redis-orchestrator: agent ${ctx.agentId} ended (${finalStatus}), job status updated via session index`,
+            );
+          }
         },
         async () => {
-          logger.warn(`redis-orchestrator: circuit breaker open, skipping status update for ${runId}`);
+          logger.warn(`redis-orchestrator: circuit breaker open, skipping status update for ${sessionKey}`);
         },
       );
       

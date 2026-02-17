@@ -23,6 +23,7 @@ export interface AgentJob {
   project?: string;                  // Project/repo context
   
   // Lifecycle
+  /** Agent lifecycle status (independent of BullMQ job state — see worker.ts header) */
   status: AgentJobStatus;
   queuedAt: number;
   startedAt?: number;

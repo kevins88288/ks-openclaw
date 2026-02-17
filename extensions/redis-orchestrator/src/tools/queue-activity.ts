@@ -10,24 +10,12 @@ import type { OpenClawPluginToolContext } from "openclaw/plugin-sdk";
 import type { AnyAgentTool } from "../../../../src/agents/tools/common.js";
 import { jsonResult } from "../../../../src/agents/tools/common.js";
 import { loadConfig } from "../../../../src/config/config.js";
+import { listAgentIds } from "../../../../src/agents/agent-scope.js";
 import type { PluginState } from "../../index.js";
 import type { AgentJob } from "../types.js";
+import { formatRelativeTime, truncateTask } from "../utils.js";
 
 const QueueActivitySchema = Type.Object({});
-
-function formatRelativeTime(timestampMs: number): string {
-  const now = Date.now();
-  const diffMs = now - timestampMs;
-  const diffSec = Math.floor(diffMs / 1000);
-  const diffMin = Math.floor(diffSec / 60);
-  const diffHour = Math.floor(diffMin / 60);
-  const diffDay = Math.floor(diffHour / 24);
-
-  if (diffSec < 60) return `${diffSec}s ago`;
-  if (diffMin < 60) return `${diffMin}m ago`;
-  if (diffHour < 24) return `${diffHour}h ago`;
-  return `${diffDay}d ago`;
-}
 
 export function createQueueActivityTool(
   state: PluginState,
@@ -51,9 +39,7 @@ export function createQueueActivityTool(
       const cfg = loadConfig();
 
       // Get all agents from config
-      const allAgents = ((cfg as any).agents?.list || [])
-        .map((a: any) => a.id)
-        .filter((id: string) => id !== "main");
+      const allAgents = listAgentIds(cfg).filter((id: string) => id !== "main");
 
       if (allAgents.length === 0) {
         return jsonResult({
@@ -61,8 +47,8 @@ export function createQueueActivityTool(
           summary: {
             pending: 0,
             active: 0,
-            completedToday: 0,
-            failedToday: 0,
+            completedTotal: 0,
+            failedTotal: 0,
           },
         });
       }
@@ -72,18 +58,16 @@ export function createQueueActivityTool(
         const summary = {
           pending: 0,
           active: 0,
-          completedToday: 0,
-          failedToday: 0,
+          completedTotal: 0,
+          failedTotal: 0,
         };
-
-        const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
 
         // Query each agent queue
         for (const agentId of allAgents) {
           const queueName = `agent:${agentId}`;
           const queue = state.jobTracker.getOrCreateQueue(queueName);
 
-          // Get counts
+          // Get counts using O(1) operation
           const counts = await queue.getJobCounts(
             "wait",
             "active",
@@ -94,9 +78,13 @@ export function createQueueActivityTool(
 
           const pendingCount = (counts.wait || 0) + (counts.delayed || 0);
           const activeCount = counts.active || 0;
+          const completedTotal = counts.completed || 0;
+          const failedTotal = counts.failed || 0;
 
           summary.pending += pendingCount;
           summary.active += activeCount;
+          summary.completedTotal += completedTotal;
+          summary.failedTotal += failedTotal;
 
           // Get active job details (if any)
           let activeJobInfo: any = null;
@@ -111,7 +99,7 @@ export function createQueueActivityTool(
               
               activeJobInfo = {
                 jobId: jobData.jobId || job.id,
-                task: jobData.task.substring(0, 80) + (jobData.task.length > 80 ? "..." : ""),
+                task: truncateTask(jobData.task),
                 label: jobData.label,
               };
 
@@ -126,36 +114,12 @@ export function createQueueActivityTool(
             agentStatus = "idle"; // No work at all
           }
 
-          // Get completed and failed jobs from last 24h
-          const completedJobs = await queue.getJobs(["completed"], 0, 999);
-          const failedJobs = await queue.getJobs(["failed"], 0, 999);
-
-          let completedToday = 0;
-          let failedToday = 0;
-
-          for (const job of completedJobs) {
-            const jobData = job.data as AgentJob;
-            if (jobData.completedAt && jobData.completedAt >= oneDayAgo) {
-              completedToday++;
-            }
-          }
-
-          for (const job of failedJobs) {
-            const jobData = job.data as AgentJob;
-            if (jobData.completedAt && jobData.completedAt >= oneDayAgo) {
-              failedToday++;
-            }
-          }
-
-          summary.completedToday += completedToday;
-          summary.failedToday += failedToday;
-
           agents[agentId] = {
             status: agentStatus,
             pending: pendingCount,
             active: activeCount,
-            completedToday,
-            failedToday,
+            completedTotal,
+            failedTotal,
             ...(activeJobInfo && { job: activeJobInfo }),
             ...(since && { since }),
           };

@@ -19,7 +19,7 @@ import type { PluginState } from "../../index.js";
 
 const QueueDispatchSchema = Type.Object({
   target: Type.String({ description: "Agent ID to dispatch work to" }),
-  task: Type.String({ description: "The instruction/prompt for the agent" }),
+  task: Type.String({ description: "The instruction/prompt for the agent", maxLength: 50000 }),
   label: Type.Optional(Type.String({ description: "Label for this dispatch" })),
   project: Type.Optional(Type.String({ description: "Project/repo context" })),
   model: Type.Optional(Type.String({ description: "Model override (provider/model)" })),
@@ -54,6 +54,12 @@ export function createQueueDispatchTool(
       // Parse parameters
       const target = readStringParam(params, "target", { required: true });
       const task = readStringParam(params, "task", { required: true });
+      
+      // Validate task length
+      if (task.length > 50000) {
+        return jsonResult({ status: "error", error: "Task exceeds 50KB limit" });
+      }
+      
       const label = readStringParam(params, "label");
       const project = readStringParam(params, "project");
       const model = readStringParam(params, "model");
