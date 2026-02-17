@@ -1,28 +1,25 @@
 /**
  * Redis Orchestrator Plugin for OpenClaw
- * 
+ *
  * Phase 1: Durable job tracking with BullMQ
- * 
+ *
  * Adds reliability around existing sessions_spawn/sessions_send by tracking
  * jobs in Redis-backed BullMQ queues. Survives gateway restarts, retries on
  * failure, alerts on DLQ.
  */
 
-import type {
-  OpenClawPluginApi,
-  OpenClawPluginDefinition,
-} from "openclaw/plugin-sdk";
-import { createRedisOrchestratorService } from './src/service.js';
-import { registerQueueCommands } from './src/cli-commands.js';
-import { 
-  createAfterToolCallHook, 
+import type { OpenClawPluginApi, OpenClawPluginDefinition } from "openclaw/plugin-sdk";
+import type { QueueCircuitBreaker } from "./src/circuit-breaker.js";
+import type { DLQAlerter } from "./src/dlq-alerting.js";
+import type { JobTracker } from "./src/job-tracker.js";
+import type { RedisConnection } from "./src/redis-connection.js";
+import { registerQueueCommands } from "./src/cli-commands.js";
+import {
+  createAfterToolCallHook,
   createAgentEndHook,
   createSessionsSendRetryHook,
-} from './src/hooks.js';
-import type Redis from 'ioredis';
-import type { QueueCircuitBreaker } from './src/circuit-breaker.js';
-import type { JobTracker } from './src/job-tracker.js';
-import type { DLQAlerter } from './src/dlq-alerting.js';
+} from "./src/hooks.js";
+import { createRedisOrchestratorService } from "./src/service.js";
 
 /**
  * Shared mutable state container.
@@ -30,7 +27,7 @@ import type { DLQAlerter } from './src/dlq-alerting.js';
  * This avoids the null-capture bug where JS closures capture null by value.
  */
 export interface PluginState {
-  connection: Redis | null;
+  connection: RedisConnection | null;
   circuitBreaker: QueueCircuitBreaker | null;
   jobTracker: JobTracker | null;
   dlqAlerter: DLQAlerter | null;
@@ -44,35 +41,38 @@ const state: PluginState = {
 };
 
 const plugin: OpenClawPluginDefinition = {
-  id: 'redis-orchestrator',
-  name: 'Redis Orchestrator',
-  description: 'BullMQ-based orchestration layer for durable agent job tracking',
-  version: '1.0.0',
-  
+  id: "redis-orchestrator",
+  name: "Redis Orchestrator",
+  description: "BullMQ-based orchestration layer for durable agent job tracking",
+  version: "1.0.0",
+
   async register(api: OpenClawPluginApi) {
-    api.logger.info('redis-orchestrator: registering plugin');
-    
+    api.logger.info("redis-orchestrator: registering plugin");
+
     // Register the background service — it owns init/teardown of shared state
     api.registerService(createRedisOrchestratorService(state));
-    
+
     // Register after_tool_call hook to track sessions_spawn
     // Hooks receive the state *object reference* and read .jobTracker at call time
-    api.on('after_tool_call', createAfterToolCallHook(state, api.logger));
-    
+    api.on("after_tool_call", createAfterToolCallHook(state, api.logger));
+
     // Register agent_end hook to update job status
-    api.on('agent_end', createAgentEndHook(state, api.logger));
-    
+    api.on("agent_end", createAgentEndHook(state, api.logger));
+
     // Register sessions_send retry hook
-    api.on('after_tool_call', createSessionsSendRetryHook(state, api.logger));
-    
+    api.on("after_tool_call", createSessionsSendRetryHook(state, api.logger));
+
     // Register CLI commands — connection created lazily inside each command
-    api.registerCli((ctx) => {
-      registerQueueCommands(ctx.program, state, ctx);
-    }, {
-      commands: ['queue'],
-    });
-    
-    api.logger.info('redis-orchestrator: plugin registered');
+    api.registerCli(
+      (ctx) => {
+        registerQueueCommands(ctx.program, state, ctx);
+      },
+      {
+        commands: ["queue"],
+      },
+    );
+
+    api.logger.info("redis-orchestrator: plugin registered");
   },
 };
 

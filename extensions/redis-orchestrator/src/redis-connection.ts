@@ -1,11 +1,20 @@
 /**
  * Redis Connection Management
- * 
+ *
  * Manages the shared Redis connection for BullMQ
  */
 
-import Redis from 'ioredis';
+import type { ConnectionOptions } from "bullmq";
 import type { PluginLogger } from "openclaw/plugin-sdk";
+import { Redis } from "ioredis";
+
+/** Redis instance type — use this for all parameter/field annotations */
+export type RedisConnection = Redis;
+
+/** Cast a Redis instance to BullMQ's ConnectionOptions (same class, different TS resolution) */
+export function asBullMQConnection(conn: Redis): ConnectionOptions {
+  return conn as unknown as ConnectionOptions;
+}
 
 export interface RedisConfig {
   host: string;
@@ -22,24 +31,24 @@ export function createRedisConnection(config: RedisConfig, logger: PluginLogger)
     retryStrategy: (times: number) => Math.min(times * 500, 30_000),
   });
 
-  connection.on('error', (err) => {
+  connection.on("error", (err: Error) => {
     logger.warn(`redis: connection error: ${err.message}`);
   });
 
-  connection.on('connect', () => {
-    logger.info('redis: connected');
+  connection.on("connect", () => {
+    logger.info("redis: connected");
   });
 
-  connection.on('ready', () => {
-    logger.info('redis: ready');
+  connection.on("ready", () => {
+    logger.info("redis: ready");
   });
 
-  connection.on('close', () => {
-    logger.warn('redis: connection closed');
+  connection.on("close", () => {
+    logger.warn("redis: connection closed");
   });
 
-  connection.on('reconnecting', () => {
-    logger.info('redis: reconnecting...');
+  connection.on("reconnecting", () => {
+    logger.info("redis: reconnecting...");
   });
 
   return connection;
@@ -48,7 +57,7 @@ export function createRedisConnection(config: RedisConfig, logger: PluginLogger)
 export async function closeRedisConnection(connection: Redis, logger: PluginLogger): Promise<void> {
   try {
     await connection.quit();
-    logger.info('redis: connection closed gracefully');
+    logger.info("redis: connection closed gracefully");
   } catch (err) {
     logger.warn(`redis: error during close: ${err instanceof Error ? err.message : String(err)}`);
   }

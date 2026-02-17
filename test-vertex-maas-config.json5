@@ -1,0 +1,43 @@
+// Test configuration for Vertex AI MaaS with GCP ADC auth
+// This config adds a Moonshot Kimi K2 Thinking model via Vertex MaaS
+{
+  agents: {
+    defaults: {
+      workspace: "~/.openclaw/workspace",
+      model: {
+        primary: "vertex-maas-moonshot/moonshotai/kimi-k2-thinking-maas",
+      },
+      models: {
+        "vertex-maas-moonshot/moonshotai/kimi-k2-thinking-maas": {
+          alias: "Kimi K2 Thinking (Vertex)",
+        },
+      },
+    },
+  },
+  models: {
+    mode: "merge",
+    providers: {
+      "vertex-maas-moonshot": {
+        baseUrl: "https://us-central1-aiplatform.googleapis.com/v1beta1/projects/kevinsproject-486701/locations/us-central1/endpoints/openapi",
+        auth: "gcp-adc",
+        api: "openai-completions",
+        models: [
+          {
+            id: "moonshotai/kimi-k2-thinking-maas",
+            name: "Kimi K2 Thinking (Vertex MaaS)",
+            reasoning: true,
+            input: ["text"],
+            cost: {
+              input: 0.0,
+              output: 0.0,
+              cacheRead: 0.0,
+              cacheWrite: 0.0,
+            },
+            contextWindow: 128000,
+            maxTokens: 16384,
+          },
+        ],
+      },
+    },
+  },
+}
