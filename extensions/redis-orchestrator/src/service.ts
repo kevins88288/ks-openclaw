@@ -6,7 +6,7 @@
  */
 
 import type { OpenClawPluginService, OpenClawPluginServiceContext } from "openclaw/plugin-sdk";
-import { Queue, QueueEvents } from "bullmq";
+import { Queue, QueueEvents, type Worker } from "bullmq";
 import type { PluginState } from "../index.js";
 import { QueueCircuitBreaker } from "./circuit-breaker.js";
 import { DLQAlerter } from "./dlq-alerting.js";
@@ -14,10 +14,12 @@ import { JobTracker } from "./job-tracker.js";
 import { createQueueOptions } from "./queue-config.js";
 import { asBullMQConnection, type RedisConnection } from "./redis-connection.js";
 import { createRedisConnection, closeRedisConnection } from "./redis-connection.js";
+import { createWorkers, closeWorkers } from "./worker.js";
 
 export function createRedisOrchestratorService(state: PluginState): OpenClawPluginService {
   let queueEventsMap: Map<string, QueueEvents> = new Map();
   let dlqQueuesMap: Map<string, Queue> = new Map();
+  let workersMap: Map<string, Worker> = new Map();
 
   return {
     id: "redis-orchestrator",
@@ -76,6 +78,16 @@ export function createRedisOrchestratorService(state: PluginState): OpenClawPlug
         // Recover interrupted jobs on startup (Task 1.11)
         await recoverInterruptedJobs(connection, state.jobTracker, ctx);
 
+        // Phase 2: Start BullMQ Workers for each agent queue
+        const agentIds = ((ctx.config as any).agents?.list || [])
+          .map((a: any) => a.id)
+          .filter((id: string) => id !== "main");
+
+        if (agentIds.length > 0) {
+          workersMap = createWorkers(connection, agentIds, ctx.logger);
+          ctx.logger.info(`redis-orchestrator: started ${workersMap.size} workers`);
+        }
+
         ctx.logger.info("redis-orchestrator: service started");
       } catch (err) {
         ctx.logger.error(
@@ -87,6 +99,12 @@ export function createRedisOrchestratorService(state: PluginState): OpenClawPlug
     },
 
     async stop(ctx: OpenClawPluginServiceContext) {
+      // Phase 2: Close all workers first (they hold jobs)
+      if (workersMap.size > 0) {
+        await closeWorkers(workersMap, ctx.logger);
+        ctx.logger.info("redis-orchestrator: all workers closed");
+      }
+
       // Close all queue event listeners
       for (const events of queueEventsMap.values()) {
         await events.close();

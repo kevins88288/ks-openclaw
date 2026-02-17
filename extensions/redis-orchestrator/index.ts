@@ -20,6 +20,7 @@ import {
   createSessionsSendRetryHook,
 } from "./src/hooks.js";
 import { createRedisOrchestratorService } from "./src/service.js";
+import { createQueueDispatchTool } from "./src/tools/queue-dispatch.js";
 
 /**
  * Shared mutable state container.
@@ -61,6 +62,11 @@ const plugin: OpenClawPluginDefinition = {
 
     // Register sessions_send retry hook
     api.on("after_tool_call", createSessionsSendRetryHook(state, api.logger));
+
+    // Phase 2: Register queue_dispatch tool
+    api.registerTool((ctx) => createQueueDispatchTool(state, ctx), {
+      name: "queue_dispatch",
+    });
 
     // Register CLI commands — connection created lazily inside each command
     api.registerCli(

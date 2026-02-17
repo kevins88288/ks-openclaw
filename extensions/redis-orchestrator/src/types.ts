@@ -38,6 +38,23 @@ export interface AgentJob {
   
   // Config
   timeoutMs?: number;                // Default: 1800000 (30 min)
+
+  // Dispatcher context (Phase 2)
+  dispatcherSessionKey?: string;
+  dispatcherAgentId?: string;
+  dispatcherDepth?: number;
+  dispatcherOrigin?: {
+    channel?: string;
+    accountId?: string;
+    to?: string;
+    threadId?: string | number;
+  };
+
+  // Additional dispatch params
+  label?: string;
+  model?: string;
+  thinking?: string;
+  cleanup?: 'delete' | 'keep';
 }
 
 export interface QueueStats {

@@ -100,14 +100,28 @@ export function createAgentEndHook(
       }
       
       const runId = match[1];
+
+      // Phase 2: Determine final status based on agent_end event
+      const finalStatus = event.success ? 'completed' as const : 'failed' as const;
+      const extras: {
+        completedAt: number;
+        error?: string;
+        startedAt?: number;
+      } = {
+        completedAt: Date.now(),
+      };
+
+      if (!event.success && event.error) {
+        extras.error = event.error;
+      }
       
       await state.circuitBreaker.dispatch(
         async () => {
-          await state.jobTracker!.updateJobStatus(runId, 'announcing', {
-            startedAt: Date.now(),
-          });
+          await state.jobTracker!.updateJobStatus(runId, finalStatus, extras);
           
-          logger.info(`redis-orchestrator: agent ${ctx.agentId} ended, job ${runId} status -> announcing`);
+          logger.info(
+            `redis-orchestrator: agent ${ctx.agentId} ended (${finalStatus}), job ${runId} status updated`,
+          );
         },
         async () => {
           logger.warn(`redis-orchestrator: circuit breaker open, skipping status update for ${runId}`);
