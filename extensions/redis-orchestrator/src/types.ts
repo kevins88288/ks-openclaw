@@ -38,6 +38,7 @@ export interface AgentJob {
   
   // Config
   timeoutMs?: number;                // Default: 1800000 (30 min)
+  runTimeoutSeconds?: number;        // Timeout in seconds (from tool param)
 
   // Dispatcher context (Phase 2)
   dispatcherSessionKey?: string;

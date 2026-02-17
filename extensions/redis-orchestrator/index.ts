@@ -21,6 +21,9 @@ import {
 } from "./src/hooks.js";
 import { createRedisOrchestratorService } from "./src/service.js";
 import { createQueueDispatchTool } from "./src/tools/queue-dispatch.js";
+import { createQueueStatusTool } from "./src/tools/queue-status.js";
+import { createQueueListTool } from "./src/tools/queue-list.js";
+import { createQueueActivityTool } from "./src/tools/queue-activity.js";
 
 /**
  * Shared mutable state container.
@@ -66,6 +69,19 @@ const plugin: OpenClawPluginDefinition = {
     // Phase 2: Register queue_dispatch tool
     api.registerTool((ctx) => createQueueDispatchTool(state, ctx), {
       name: "queue_dispatch",
+    });
+
+    // Phase 2 Batch 2: Register queue management tools
+    api.registerTool((ctx) => createQueueStatusTool(state, ctx), {
+      name: "queue_status",
+    });
+
+    api.registerTool((ctx) => createQueueListTool(state, ctx), {
+      name: "queue_list",
+    });
+
+    api.registerTool((ctx) => createQueueActivityTool(state, ctx), {
+      name: "queue_activity",
     });
 
     // Register CLI commands — connection created lazily inside each command

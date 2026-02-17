@@ -9,13 +9,10 @@
  * The announce pipeline handles delivery independently.
  */
 
-import crypto from "node:crypto";
-import { Worker, type Job } from "bullmq";
 import type { PluginLogger } from "openclaw/plugin-sdk";
-import { loadConfig } from "../../../src/config/config.js";
-import { callGateway } from "../../../src/gateway/call.js";
-import { normalizeAgentId, parseAgentSessionKey } from "../../../src/routing/session-key.js";
-import { normalizeDeliveryContext } from "../../../src/utils/delivery-context.js";
+import { Worker, type Job } from "bullmq";
+import crypto from "node:crypto";
+import type { AgentJob } from "./types.js";
 import { resolveAgentConfig } from "../../../src/agents/agent-scope.js";
 import { AGENT_LANE_SUBAGENT } from "../../../src/agents/lanes.js";
 import { resolveDefaultModelForAgent } from "../../../src/agents/model-selection.js";
@@ -31,7 +28,10 @@ import {
   resolveMainSessionAlias,
 } from "../../../src/agents/tools/sessions-helpers.js";
 import { normalizeThinkLevel } from "../../../src/auto-reply/thinking.js";
-import type { AgentJob } from "./types.js";
+import { loadConfig } from "../../../src/config/config.js";
+import { callGateway } from "../../../src/gateway/call.js";
+import { normalizeAgentId, parseAgentSessionKey } from "../../../src/routing/session-key.js";
+import { normalizeDeliveryContext } from "../../../src/utils/delivery-context.js";
 import { createWorkerOptions } from "./queue-config.js";
 import { asBullMQConnection, type RedisConnection } from "./redis-connection.js";
 
@@ -152,11 +152,13 @@ async function processJob(job: Job<AgentJob>, logger: PluginLogger): Promise<str
 
   // 6. Resolve thinking
   const resolvedThinkingDefaultRaw =
-    (typeof targetAgentConfig?.subagents?.thinking === "string"
-      ? targetAgentConfig.subagents.thinking
+    (typeof (targetAgentConfig?.subagents as { thinking?: string } | undefined)?.thinking ===
+    "string"
+      ? (targetAgentConfig?.subagents as { thinking?: string } | undefined)?.thinking
       : undefined) ??
-    (typeof cfg.agents?.defaults?.subagents?.thinking === "string"
-      ? cfg.agents.defaults.subagents.thinking
+    (typeof (cfg.agents?.defaults?.subagents as { thinking?: string } | undefined)?.thinking ===
+    "string"
+      ? (cfg.agents?.defaults?.subagents as { thinking?: string } | undefined)?.thinking
       : undefined);
   const thinkingCandidateRaw = thinkingOverrideRaw || resolvedThinkingDefaultRaw;
   let thinkingOverride: string | undefined;
@@ -226,8 +228,7 @@ async function processJob(job: Job<AgentJob>, logger: PluginLogger): Promise<str
       channel: requesterOrigin?.channel ?? undefined,
       to: requesterOrigin?.to ?? undefined,
       accountId: requesterOrigin?.accountId ?? undefined,
-      threadId:
-        requesterOrigin?.threadId != null ? String(requesterOrigin.threadId) : undefined,
+      threadId: requesterOrigin?.threadId != null ? String(requesterOrigin.threadId) : undefined,
       idempotencyKey: childIdem,
       deliver: false,
       lane: AGENT_LANE_SUBAGENT,
@@ -292,15 +293,11 @@ export function createWorkers(
   for (const agentId of agentIds) {
     const queueName = `agent:${agentId}`;
 
-    const worker = new Worker<AgentJob, string>(
-      queueName,
-      async (job) => processJob(job, logger),
-      {
-        connection: asBullMQConnection(connection),
-        ...workerOpts,
-        prefix: "bull",
-      },
-    );
+    const worker = new Worker<AgentJob, string>(queueName, async (job) => processJob(job, logger), {
+      connection: asBullMQConnection(connection),
+      ...workerOpts,
+      prefix: "bull",
+    });
 
     worker.on("error", (err) => {
       logger.warn(`worker[${agentId}]: error: ${err.message}`);

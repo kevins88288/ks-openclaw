@@ -67,6 +67,7 @@ export type {
   OpenClawPluginDefinition,
   OpenClawPluginService,
   OpenClawPluginServiceContext,
+  OpenClawPluginToolContext,
   PluginLogger,
   PluginHookAfterToolCallEvent,
   PluginHookToolContext,
