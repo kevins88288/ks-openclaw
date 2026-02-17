@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
+import dns from "node:dns";
 import process from "node:process";
 import { applyCliProfileEnv, parseCliProfileArgs } from "./cli/profile.js";
 import { shouldSkipRespawnForArgv } from "./cli/respawn-policy.js";
@@ -7,6 +8,13 @@ import { normalizeWindowsArgv } from "./cli/windows-argv.js";
 import { isTruthyEnvValue, normalizeEnv } from "./infra/env.js";
 import { installProcessWarningFilter } from "./infra/warning-filter.js";
 import { attachChildProcessBridge } from "./process/child-process-bridge.js";
+
+// Force IPv4-first DNS resolution globally.  Many cloud VMs (e.g. GCP) lack
+// IPv6 connectivity.  When a provider API (Anthropic, OpenAI, etc.) resolves
+// to an IPv6 address the connection fails with ENETUNREACH and crashes the
+// gateway.  `ipv4first` tries A records before AAAA, so IPv4 is preferred but
+// IPv6 still works on hosts that support it.
+dns.setDefaultResultOrder("ipv4first");
 
 process.title = "openclaw";
 installProcessWarningFilter();
