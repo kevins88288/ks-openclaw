@@ -180,3 +180,91 @@ callGateway("sessions.patch", { key, spawnDepth, model, thinkingLevel })  // ~RT
 - [x] `queue_activity` reports `"working"` for agents with active jobs
 - [x] `callGateway` round-trips during job processing reduced (3→1, ~67% reduction)
 - [x] No change in job processing correctness — same result, fewer round trips
+
+---
+
+## Batch 4a: CLI Retry/Drain + FlowProducer Dependency Chains
+
+**Commits:**
+- `daecaeff2` — Phase 3 batch 4a — CLI retry/drain commands
+- `6df2bc798` — Phase 3 batch 4b — FlowProducer dependency chains (parent-child, fail-fast)
+
+### Task 3.9 — CLI retry/drain commands ✅
+
+**`openclaw queue retry <jobId>`:**
+- Scans all agent queues to find the job by jobId
+- Validates job is in `failed` BullMQ state before allowing retry
+- Calls `job.retry("failed")` to move job back to waiting
+- Prints: `Job <jobId> re-queued for agent <target>`
+- Errors clearly: job not found, or job not in failed state (shows actual state)
+
+**`openclaw queue drain <agent> --confirm`:**
+- Requires `--confirm` flag — without it, prints error with usage example
+- Gets waiting + delayed counts before drain for accurate reporting
+- Calls `queue.drain()` (removes waiting jobs) + `queue.clean(0, 0, "delayed")` (removes delayed)
+- Prints: `Drained <n> jobs from agent <agentId>`
+- Both commands handle Redis connection errors clearly (lazy connection if service not running)
+
+### Task 3.10 — FlowProducer dependency chains ✅
+
+**Schema:**
+- `dependsOn?: string[]` added to `AgentJob` type in `types.ts`
+- `dependsOn` parameter added to `queue_dispatch` tool schema (max 20 items)
+
+**FlowProducer implementation (`job-tracker.ts`):**
+- When `dependsOn` is provided, uses `FlowProducer.add()` instead of `Queue.add()`
+- Creates parent (dependent job) with "dependency-gate" children on `dep-gates` queue
+- Each gate child references one existing dependency jobId
+- Validates all dependency jobs exist (via job index) before creating the flow
+- Parent stays in BullMQ `waiting-children` state until all gates complete
+- `FlowProducer` instance lazily created, closed on tracker shutdown
+
+**Dependency gate worker (`dependency-gate-worker.ts` — new):**
+- Lightweight worker on `dep-gates` queue with concurrency: 10
+- Polls referenced dependency job status every 5 seconds
+- If dependency completed → gate completes → parent unlocked
+- If dependency failed → gate throws → fail-fast (parent stays blocked)
+- 30 minute timeout on waiting for dependencies
+- Lock duration: 10 min, stall interval: 5 min (gates poll for a while)
+
+**Service integration (`service.ts`):**
+- Starts dependency-gate worker after agent workers
+- Closes dependency-gate worker before agent workers during shutdown
+
+**`queue_status` display (`queue-status.ts`):**
+- Returns `dependsOn: string[]` when present on the job
+- Returns `waitingForDependencies: true` when BullMQ job state is `waiting-children`
+- Returns `waitingForDependencies: false` when dependencies have all resolved
+
+**Scope limits (per Ultron review):**
+- Parent-child only — no nested/multi-level dependency graphs
+- Single level of `dependsOn` only
+- No `failurePolicy` parameter exposed — fail-fast is always the behavior
+- Max 20 dependencies per job (schema validation)
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `src/cli-commands.ts` | Added `retry` and `drain` CLI commands |
+| `src/types.ts` | Added `dependsOn?: string[]` to AgentJob |
+| `src/job-tracker.ts` | FlowProducer integration, `createJobWithDependencies()` method |
+| `src/dependency-gate-worker.ts` | **New** — dependency-gate polling worker |
+| `src/service.ts` | Start/stop dependency-gate worker |
+| `src/tools/queue-dispatch.ts` | Added `dependsOn` parameter to schema and dispatch logic |
+| `src/tools/queue-status.ts` | Show `dependsOn` and `waitingForDependencies` in status response |
+
+### Acceptance Criteria
+
+**CLI (3.9):**
+- [x] `openclaw queue retry <jobId>` requeues a failed job
+- [x] `openclaw queue drain <agent> --confirm` removes all waiting/delayed jobs for that agent
+- [x] `openclaw queue drain <agent>` (without --confirm) errors with clear message
+- [x] Both commands error clearly if Redis/state not available
+
+**FlowProducer (3.10):**
+- [x] `queue_dispatch` with `dependsOn: ["j_001"]` creates a dependent job that waits for j_001
+- [x] If dependency job fails, dependent job is auto-failed (via gate worker fail-fast)
+- [x] `queue_status` shows `waitingForDependencies: true` when applicable
+- [x] No `failurePolicy` parameter exposed — fail-fast only
+- [x] No nested/multi-level dependencies (single level only)
