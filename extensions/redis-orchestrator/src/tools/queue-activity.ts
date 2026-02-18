@@ -15,6 +15,7 @@ import { listAgentIds } from "../../../../src/agents/agent-scope.js";
 import type { PluginState } from "../../index.js";
 import type { AgentJob } from "../types.js";
 import { formatRelativeTime, truncateTask } from "../utils.js";
+import { isSystemAgent } from "../auth-helpers.js";
 
 const QueueActivitySchema = Type.Object({});
 
@@ -38,9 +39,15 @@ export function createQueueActivityTool(
       }
 
       const cfg = loadConfig();
+      const callerAgentId = ctx.agentId ?? "";
+      const callerIsSystem = isSystemAgent(callerAgentId);
 
-      // Get all agents from config
-      const allAgents = listAgentIds(cfg).filter((id: string) => id !== "main");
+      // Get all agents from config — non-system agents only see their own queue
+      const allAgents = listAgentIds(cfg).filter((id: string) => {
+        if (id === "main") return false;
+        if (!callerIsSystem) return id === callerAgentId;
+        return true;
+      });
 
       if (allAgents.length === 0) {
         return jsonResult({

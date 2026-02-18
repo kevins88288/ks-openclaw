@@ -29,7 +29,7 @@ import type { PluginState } from "../../index.js";
 const QueueDispatchSchema = Type.Object({
   target: Type.String({ description: "Agent ID to dispatch work to" }),
   task: Type.String({ description: "The instruction/prompt for the agent", maxLength: 50000 }),
-  label: Type.Optional(Type.String({ description: "Label for this dispatch" })),
+  label: Type.Optional(Type.String({ description: "Label for this dispatch", maxLength: 500 })),
   project: Type.Optional(Type.String({ description: "Project/repo context" })),
   model: Type.Optional(Type.String({ description: "Model override (provider/model)" })),
   thinking: Type.Optional(Type.String({ description: "Thinking level override" })),
@@ -44,6 +44,56 @@ const QueueDispatchSchema = Type.Object({
     }),
   ),
 });
+
+/**
+ * Direct sessions_spawn fallback when Redis/orchestrator is unavailable.
+ * Used by both orchestrator-not-initialized and circuit-breaker-open paths.
+ */
+async function directSpawnFallback(
+  params: {
+    target: string;
+    task: string;
+    label?: string;
+    model?: string;
+    thinking?: string;
+    cleanup?: string;
+    runTimeoutSeconds?: number;
+  },
+  reason: string,
+): Promise<Record<string, unknown>> {
+  const spawnParams: Record<string, unknown> = {
+    task: params.task,
+    agentId: params.target,
+    runTimeoutSeconds: params.runTimeoutSeconds || undefined,
+    cleanup: params.cleanup || "keep",
+  };
+  if (params.label) spawnParams.label = params.label;
+  if (params.model) spawnParams.model = params.model;
+  if (params.thinking) spawnParams.thinking = params.thinking;
+
+  const response = await callGateway<{ runId?: string }>({
+    method: "sessions.spawn",
+    params: spawnParams,
+    timeoutMs: 15_000,
+  });
+
+  return {
+    jobId: response?.runId ?? `fallback-${Date.now()}`,
+    status: "dispatched",
+    target: params.target,
+    fallback: true,
+    fallbackReason: reason,
+  };
+}
+
+/** Lua script for atomic rate limiting: INCR + conditional EXPIRE in one round-trip */
+const RATE_LIMIT_LUA = `
+local current = redis.call('INCR', KEYS[1])
+if current == 1 then
+  redis.call('EXPIRE', KEYS[1], 60)
+end
+return current
+`;
 
 /** Simple warn logger — tool context doesn't expose logger, so use console */
 function warnLog(msg: string): void {
@@ -70,44 +120,21 @@ export function createQueueDispatchTool(
           `queue_dispatch: orchestrator not running — falling back to sessions_spawn for target=${normalizeAgentId(readStringParam(params, "target", { required: true }))}`,
         );
 
-        // We still need to parse params and validate target before fallback
-        // Parse happens below, but we need target now for the fallback
         const fallbackTarget = normalizeAgentId(readStringParam(params, "target", { required: true }));
         const fallbackTask = readStringParam(params, "task", { required: true });
-        const fallbackLabel = readStringParam(params, "label");
-        const fallbackModel = readStringParam(params, "model");
-        const fallbackThinking = readStringParam(params, "thinking");
-        const fallbackCleanup =
-          params.cleanup === "keep" || params.cleanup === "delete" ? params.cleanup : "keep";
-        const fallbackTimeout =
-          typeof params.runTimeoutSeconds === "number" && Number.isFinite(params.runTimeoutSeconds)
-            ? Math.max(0, Math.floor(params.runTimeoutSeconds))
-            : 0;
 
         try {
-          const spawnParams: Record<string, unknown> = {
-            task: fallbackTask,
-            agentId: fallbackTarget,
-            runTimeoutSeconds: fallbackTimeout || undefined,
-            cleanup: fallbackCleanup,
-          };
-          if (fallbackLabel) spawnParams.label = fallbackLabel;
-          if (fallbackModel) spawnParams.model = fallbackModel;
-          if (fallbackThinking) spawnParams.thinking = fallbackThinking;
-
-          const response = await callGateway<{ runId?: string }>({
-            method: "sessions.spawn",
-            params: spawnParams,
-            timeoutMs: 15_000,
-          });
-
-          return jsonResult({
-            jobId: response?.runId ?? `fallback-${Date.now()}`,
-            status: "dispatched",
+          return jsonResult(await directSpawnFallback({
             target: fallbackTarget,
-            fallback: true,
-            fallbackReason: "orchestrator_unavailable",
-          });
+            task: fallbackTask,
+            label: readStringParam(params, "label"),
+            model: readStringParam(params, "model"),
+            thinking: readStringParam(params, "thinking"),
+            cleanup: params.cleanup === "keep" || params.cleanup === "delete" ? params.cleanup : "keep",
+            runTimeoutSeconds: typeof params.runTimeoutSeconds === "number" && Number.isFinite(params.runTimeoutSeconds)
+              ? Math.max(0, Math.floor(params.runTimeoutSeconds))
+              : 0,
+          }, "orchestrator_unavailable"));
         } catch (fallbackErr) {
           return jsonResult({
             status: "error",
@@ -190,14 +217,10 @@ export function createQueueDispatchTool(
       const dispatchesPerMinute = (rateLimitConfig?.dispatchesPerMinute as number) ?? 10;
       const maxQueueDepth = (rateLimitConfig?.maxQueueDepth as number) ?? 50;
 
-      // Check per-agent rate limit (Redis-based counter with 60s TTL)
+      // Check per-agent rate limit (Redis-based counter with 60s TTL, atomic via Lua)
       if (dispatchesPerMinute > 0) {
-        const rateLimitKey = `ratelimit:dispatch:${callerAgentId}`;
-        const current = await state.connection.incr(rateLimitKey);
-        if (current === 1) {
-          // First dispatch in this window — set TTL
-          await state.connection.expire(rateLimitKey, 60);
-        }
+        const rateLimitKey = `bull:ratelimit:dispatch:${callerAgentId}`;
+        const current = await state.connection.eval(RATE_LIMIT_LUA, 1, rateLimitKey) as number;
         if (current > dispatchesPerMinute) {
           return jsonResult({
             status: "rate_limited",
@@ -257,26 +280,18 @@ export function createQueueDispatchTool(
               `queue_dispatch: circuit breaker open — falling back to sessions_spawn for target=${targetAgentId}`,
             );
 
-            const spawnParams: Record<string, unknown> = {
+            const result = await directSpawnFallback({
+              target: targetAgentId,
               task,
-              agentId: targetAgentId,
-              runTimeoutSeconds: runTimeoutSeconds || undefined,
+              label,
+              model,
+              thinking,
               cleanup,
-            };
-            if (label) spawnParams.label = label;
-            if (model) spawnParams.model = model;
-            if (thinking) spawnParams.thinking = thinking;
-
-            const response = await callGateway<{ runId?: string; sessionKey?: string }>({
-              method: "sessions.spawn",
-              params: spawnParams,
-              timeoutMs: 15_000,
-            });
-
-            const fallbackRunId = response?.runId ?? `fallback-${Date.now()}`;
+              runTimeoutSeconds,
+            }, "circuit_open");
 
             // Return a sentinel value that signals fallback mode
-            return `__fallback__:${fallbackRunId}`;
+            return `__fallback__:${result.jobId}`;
           },
         );
 

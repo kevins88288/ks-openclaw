@@ -335,7 +335,7 @@ async function getQueueNames(connection: RedisConnection): Promise<string[]> {
   const keys: string[] = await connection.keys("bull:agent-*:meta");
   return keys
     .map((key: string) => {
-      const match = key.match(/bull:(agent-[^-]+):/);
+      const match = key.match(/bull:(agent-[^:]+):/);
       return match ? match[1] : null;
     })
     .filter((name: string | null): name is string => name !== null);

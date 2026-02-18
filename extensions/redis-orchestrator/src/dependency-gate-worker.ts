@@ -11,7 +11,7 @@
  */
 
 import type { PluginLogger } from "openclaw/plugin-sdk";
-import { Worker, type Job } from "bullmq";
+import { Worker, UnrecoverableError, type Job } from "bullmq";
 import type { RedisConnection } from "./redis-connection.js";
 import { asBullMQConnection } from "./redis-connection.js";
 import type { JobTracker } from "./job-tracker.js";
@@ -59,8 +59,9 @@ async function processGate(
     }
 
     if (depState === "failed") {
-      // Fail-fast: dependency failed, so this gate fails, parent stays unprocessed
-      throw new Error(
+      // Fail-fast: dependency failed, so this gate fails, parent stays unprocessed.
+      // UnrecoverableError because retrying won't fix a failed dependency.
+      throw new UnrecoverableError(
         `Dependency job ${dependencyJobId} failed — fail-fast: ${depJob.data?.error || depJob.failedReason || "unknown reason"}`,
       );
     }
@@ -88,9 +89,9 @@ export function createDependencyGateWorker(
       connection: asBullMQConnection(connection),
       prefix: "bull",
       concurrency: 10, // Process multiple gates concurrently
-      lockDuration: 600_000, // 10 min — gates may poll for a while
+      lockDuration: 2_100_000, // 35 min — must outlast MAX_WAIT_MS (30 min) + buffer
       stalledInterval: 300_000, // 5 min
-      maxStalledCount: 1,
+      maxStalledCount: 2, // Extra resilience for long-running gate polls
     },
   );
 

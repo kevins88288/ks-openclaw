@@ -40,6 +40,8 @@ export function mountBullBoard(
   serverAdapter.setBasePath(BULL_BOARD_PATH);
 
   const board = createBullBoard({
+    // NOTE: readOnlyMode hides mutation UI but does NOT block Bull Board's API endpoints.
+    // The Bearer token in handleAuth() is the actual security boundary.
     queues: queues.map((q) => new BullMQAdapter(q, { readOnlyMode: true })),
     serverAdapter,
     options: { uiConfig: { boardTitle: "OpenClaw Queue Monitor" } },

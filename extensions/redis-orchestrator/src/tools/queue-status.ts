@@ -129,7 +129,7 @@ export function createQueueStatusTool(
           result.openclawRunId = jobData.openclawRunId;
         }
 
-        if (jobData.openclawSessionKey) {
+        if (jobData.openclawSessionKey && isSystemAgent(callerAgentId)) {
           result.openclawSessionKey = jobData.openclawSessionKey;
         }
 

@@ -12,19 +12,123 @@
  */
 
 import type { PluginLogger } from "openclaw/plugin-sdk";
-import { Queue, FlowProducer } from "bullmq";
+import { Queue, FlowProducer, Job } from "bullmq";
 import type { AgentJob } from "./types.js";
 import { createQueueOptions, DEFAULT_JOB_TIMEOUT_MS } from "./queue-config.js";
 import { asBullMQConnection, type RedisConnection } from "./redis-connection.js";
 
+/** Batch size for stale index cleanup to avoid blocking Redis */
+const CLEANUP_BATCH_SIZE = 50;
+/** Interval for periodic stale index cleanup (1 hour) */
+const CLEANUP_INTERVAL_MS = 3_600_000;
+
 export class JobTracker {
   private queues: Map<string, Queue> = new Map();
   private flowProducer: FlowProducer | null = null;
+  private cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     private connection: RedisConnection,
     private logger: PluginLogger,
   ) {}
+
+  /**
+   * Initialize the job tracker: run initial stale index cleanup and start periodic cleanup.
+   */
+  async initialize(): Promise<void> {
+    await this.cleanupStaleIndexEntries();
+
+    this.cleanupTimer = setInterval(() => {
+      this.cleanupStaleIndexEntries().catch((err) => {
+        this.logger.warn(
+          `job-tracker: periodic cleanup failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+    }, CLEANUP_INTERVAL_MS);
+
+    // Don't keep the process alive just for cleanup
+    if (this.cleanupTimer && typeof this.cleanupTimer === "object" && "unref" in this.cleanupTimer) {
+      this.cleanupTimer.unref();
+    }
+  }
+
+  /**
+   * Scan bull:job-index and bull:session-index for entries whose BullMQ jobs
+   * no longer exist, and remove them in small batches.
+   */
+  async cleanupStaleIndexEntries(): Promise<void> {
+    let removedJobs = 0;
+    let removedSessions = 0;
+
+    try {
+      // Clean bull:job-index
+      const jobEntries = await this.connection.hgetall(JobTracker.JOB_INDEX_KEY);
+      const staleJobKeys: string[] = [];
+
+      for (const [jobId, queueName] of Object.entries(jobEntries)) {
+        const queue = this.getOrCreateQueue(queueName);
+        try {
+          const job = await Job.fromId(queue, jobId);
+          if (!job) {
+            staleJobKeys.push(jobId);
+          }
+        } catch {
+          // Job.fromId threw — job is gone
+          staleJobKeys.push(jobId);
+        }
+
+        // Delete in batches to avoid blocking Redis
+        if (staleJobKeys.length >= CLEANUP_BATCH_SIZE) {
+          await this.connection.hdel(JobTracker.JOB_INDEX_KEY, ...staleJobKeys);
+          removedJobs += staleJobKeys.length;
+          staleJobKeys.length = 0;
+        }
+      }
+
+      if (staleJobKeys.length > 0) {
+        await this.connection.hdel(JobTracker.JOB_INDEX_KEY, ...staleJobKeys);
+        removedJobs += staleJobKeys.length;
+      }
+
+      // Clean bull:session-index
+      const sessionEntries = await this.connection.hgetall(JobTracker.SESSION_INDEX_KEY);
+      const staleSessionKeys: string[] = [];
+
+      for (const [sessionKey, raw] of Object.entries(sessionEntries)) {
+        try {
+          const { jobId, queueName } = JSON.parse(raw);
+          const queue = this.getOrCreateQueue(queueName);
+          const job = await Job.fromId(queue, jobId);
+          if (!job) {
+            staleSessionKeys.push(sessionKey);
+          }
+        } catch {
+          staleSessionKeys.push(sessionKey);
+        }
+
+        if (staleSessionKeys.length >= CLEANUP_BATCH_SIZE) {
+          await this.connection.hdel(JobTracker.SESSION_INDEX_KEY, ...staleSessionKeys);
+          removedSessions += staleSessionKeys.length;
+          staleSessionKeys.length = 0;
+        }
+      }
+
+      if (staleSessionKeys.length > 0) {
+        await this.connection.hdel(JobTracker.SESSION_INDEX_KEY, ...staleSessionKeys);
+        removedSessions += staleSessionKeys.length;
+      }
+
+      if (removedJobs > 0 || removedSessions > 0) {
+        this.logger.info(
+          `job-tracker: cleaned up ${removedJobs} stale job index entries and ${removedSessions} stale session index entries`,
+        );
+      }
+    } catch (err) {
+      this.logger.warn(
+        `job-tracker: stale index cleanup error: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
 
   private getFlowProducer(): FlowProducer {
     if (!this.flowProducer) {
@@ -393,6 +497,10 @@ export class JobTracker {
   }
 
   async close(): Promise<void> {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
     if (this.flowProducer) {
       await this.flowProducer.close();
       this.flowProducer = null;

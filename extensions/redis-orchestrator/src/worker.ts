@@ -196,7 +196,7 @@ async function processJob(
   if (thinkingCandidateRaw) {
     const normalized = normalizeThinkLevel(thinkingCandidateRaw);
     if (!normalized) {
-      throw new Error(`Invalid thinking level "${thinkingCandidateRaw}".`);
+      throw new UnrecoverableError(`Invalid thinking level "${thinkingCandidateRaw}".`);
     }
     thinkingOverride = normalized;
   }

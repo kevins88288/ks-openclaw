@@ -87,11 +87,17 @@ export function createRedisOrchestratorService(state: PluginState): OpenClawPlug
           }
         });
 
+        // Initialize job tracker (runs initial stale index cleanup + starts periodic cleanup)
+        await state.jobTracker.initialize();
+
         // Set up DLQ event listeners for all agent queues
         await setupDLQListeners(connection, state.dlqAlerter, ctx, queueEventsMap, dlqQueuesMap);
 
         // Recover interrupted jobs on startup (Task 1.11)
         await recoverInterruptedJobs(connection, state.jobTracker, ctx);
+
+        // Run stale index cleanup after recovery (entries from crashed jobs)
+        await state.jobTracker.cleanupStaleIndexEntries();
 
         // Phase 2: Start BullMQ Workers for each agent queue
         const agentIds = listAgentIds(ctx.config).filter((id: string) => id !== "main");
