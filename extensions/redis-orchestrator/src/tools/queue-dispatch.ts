@@ -50,6 +50,9 @@ const QueueDispatchSchema = Type.Object({
   depth: Type.Optional(
     Type.Number({ minimum: 0, description: "Explicit depth for the spawned agent" }),
   ),
+  storeResult: Type.Optional(
+    Type.Boolean({ description: "If true, capture agent's final message in job record after completion" }),
+  ),
 });
 
 /**
@@ -187,6 +190,9 @@ export function createQueueDispatchTool(
           ? Math.max(0, Math.floor(params.depth))
           : undefined;
 
+      // Phase 3.5 Batch 2: storeResult opt-in
+      const storeResult = typeof params.storeResult === "boolean" ? params.storeResult : undefined;
+
       const cfg = loadConfig();
 
       // Resolve dispatcher identity
@@ -301,6 +307,7 @@ export function createQueueDispatchTool(
               dependsOn,
               systemPromptAddition,
               depth,
+              storeResult,
             });
           },
           // Phase 3 Task 3.12: Fallback to direct sessions_spawn when circuit is open

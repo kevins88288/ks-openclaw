@@ -16,6 +16,7 @@ import type {
   PluginHookAgentContext,
   PluginLogger,
 } from "openclaw/plugin-sdk";
+import type { Job } from "bullmq";
 import type { PluginState } from '../index.js';
 import type { RedisOrchestratorConfig } from './config-schema.js';
 // COUPLING: not in plugin-sdk — tracks src/gateway/call.js. File SDK exposure request if this breaks.
@@ -141,6 +142,30 @@ export function createAgentEndHook(
             );
           }
 
+          // Phase 3.5 Batch 2: Result capture — only if storeResult: true on the job
+          if (event.success) {
+            const resolved = await resolveJobFromSessionKey(state, sessionKey);
+            if (resolved && resolved.job.data.storeResult) {
+              try {
+                const history = await callGateway<{ messages?: Array<{ role: string; content: string }> }>({
+                  method: "sessions.history",
+                  params: { sessionKey: ctx.sessionKey, limit: 1 },
+                  timeoutMs: 10_000,
+                });
+                const lastMessage = history?.messages?.[0];
+                if (lastMessage?.role === "assistant" && lastMessage.content) {
+                  const truncated = lastMessage.content.length > 5000
+                    ? lastMessage.content.slice(0, 5000)
+                    : lastMessage.content;
+                  await resolved.job.updateData({ ...resolved.job.data, result: truncated });
+                }
+              } catch (err) {
+                // Best-effort — never block job completion
+                logger.warn(`redis-orchestrator: result capture failed for job ${resolved.jobId}: ${err instanceof Error ? err.message : String(err)}`);
+              }
+            }
+          }
+
           // Phase 3.5 Batch 1: Agent-level re-dispatch retry on failure
           if (!event.success) {
             await handleAgentFailureRetry(state, logger, sessionKey);
@@ -155,6 +180,24 @@ export function createAgentEndHook(
       logger.warn(`redis-orchestrator: agent_end hook error: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
+}
+
+// ---------------------------------------------------------------------------
+// Shared helper: resolve BullMQ Job from session key index
+// Used by result capture (Batch 2) and failure retry (Batch 1).
+// ---------------------------------------------------------------------------
+
+async function resolveJobFromSessionKey(
+  state: PluginState,
+  sessionKey: string,
+): Promise<{ job: Job; jobId: string; queueName: string } | null> {
+  const raw = await state.connection!.hget("bull:session-index", sessionKey);
+  if (!raw) return null;
+  const { jobId, queueName } = JSON.parse(raw);
+  const queue = state.jobTracker!.getOrCreateQueue(queueName);
+  const job = await queue.getJob(jobId);
+  if (!job) return null;
+  return { job, jobId, queueName };
 }
 
 /**
@@ -173,20 +216,14 @@ async function handleAgentFailureRetry(
   sessionKey: string,
 ): Promise<void> {
   try {
-    // Resolve the BullMQ job from the session key index
-    const raw = await state.connection!.hget("bull:session-index", sessionKey);
-    if (!raw) {
+    // Resolve the BullMQ job from the session key index (shared helper)
+    const resolved = await resolveJobFromSessionKey(state, sessionKey);
+    if (!resolved) {
       logger.warn(`redis-orchestrator: retry: no session index entry for ${sessionKey}`);
       return;
     }
 
-    const { jobId, queueName } = JSON.parse(raw);
-    const queue = state.jobTracker!.getOrCreateQueue(queueName);
-    const job = await queue.getJob(jobId);
-    if (!job) {
-      logger.warn(`redis-orchestrator: retry: job ${jobId} not found in queue ${queueName}`);
-      return;
-    }
+    const { job, jobId, queueName } = resolved;
 
     const config = (state.pluginConfig ?? {}) as RedisOrchestratorConfig;
     const maxAttempts = config.retry?.agentFailureAttempts ?? 3;

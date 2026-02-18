@@ -117,7 +117,8 @@ export function createQueueStatusTool(
           };
         }
 
-        if (jobData.result) {
+        // Phase 3.5 Batch 2: result field — system callers only
+        if (isSystemAgent(callerAgentId) && jobData.result) {
           result.result = jobData.result;
         }
 
@@ -147,10 +148,8 @@ export function createQueueStatusTool(
           result.waitingForDependencies = waitingForDependencies;
         }
 
-        // Phase 3.5 Batch 1: Include agent-level retry fields
-        if (jobData.retryCount !== undefined && jobData.retryCount > 0) {
-          result.retryCount = jobData.retryCount;
-        }
+        // Phase 3.5: Always include retryCount (Batch 2 fix — was only returned when > 0)
+        result.retryCount = jobData.retryCount ?? 0;
         if (jobData.originalJobId) {
           result.originalJobId = jobData.originalJobId;
         }

@@ -180,6 +180,7 @@ export class JobTracker {
     dependsOn?: string[];
     systemPromptAddition?: string;
     depth?: number;
+    storeResult?: boolean;
   }): Promise<string> {
     const queue = this.getQueueForAgent(params.target);
 
@@ -206,6 +207,7 @@ export class JobTracker {
       dependsOn: params.dependsOn,
       systemPromptAddition: params.systemPromptAddition,
       depth: params.depth,
+      storeResult: params.storeResult,
     };
 
     const addOpts: Record<string, unknown> = {};

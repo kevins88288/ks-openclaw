@@ -67,6 +67,9 @@ export interface AgentJob {
   originalJobId?: string;      // links back to the first dispatch in a retry chain
   retriedByJobId?: string;     // links forward to the retry job (if re-dispatched)
 
+  // Job completion storage (Phase 3.5 Batch 2)
+  storeResult?: boolean;       // if true, capture agent's final message in job record after completion
+
   // Dependency chains (Phase 3 Task 3.10)
   dependsOn?: string[];
 }

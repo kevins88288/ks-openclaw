@@ -40,6 +40,7 @@ const QueueListSchema = Type.Object({
       description: "Maximum number of jobs to return (default 20, max 100)",
     }),
   ),
+  project: Type.Optional(Type.String({ description: "Filter by project" })),
 });
 
 type BullMQJobStatus = "wait" | "active" | "completed" | "failed" | "delayed" | "paused";
@@ -84,6 +85,7 @@ export function createQueueListTool(
 
       const agentFilter = readStringParam(params, "agent");
       const statusFilter = readStringParam(params, "status");
+      const projectFilter = readStringParam(params, "project");
       const limit = readNumberParam(params, "limit") ?? 20;
       const cappedLimit = Math.min(Math.max(1, Math.floor(limit)), 100);
       const callerAgentId = ctx.agentId ?? "";
@@ -147,6 +149,9 @@ export function createQueueListTool(
                 const isTarget = jobData.target === callerAgentId;
                 if (!isDispatcher && !isTarget) continue;
               }
+
+              // Phase 3.5 Batch 2: project filter
+              if (projectFilter && jobData.project !== projectFilter) continue;
 
               const jobSummary: any = {
                 jobId: jobData.jobId || job.id,
