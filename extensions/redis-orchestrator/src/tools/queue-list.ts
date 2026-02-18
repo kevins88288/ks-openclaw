@@ -174,6 +174,11 @@ export function createQueueListTool(
                 jobSummary.openclawSessionKey = jobData.openclawSessionKey;
               }
 
+              // Phase 3 Task 3.10: Include dependency info
+              if (jobData.dependsOn && jobData.dependsOn.length > 0) {
+                jobSummary.dependsOn = jobData.dependsOn;
+              }
+
               allJobs.push(jobSummary);
             }
 

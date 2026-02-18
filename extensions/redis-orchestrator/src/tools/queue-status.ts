@@ -47,6 +47,16 @@ export function createQueueStatusTool(
         const jobData = await state.jobTracker.findJobByRunId(jobId);
 
         if (!jobData) {
+          // Phase 3 Task 3.12: Detect fallback-dispatched jobs
+          if (jobId.startsWith("fallback-")) {
+            return jsonResult({
+              jobId,
+              status: "unknown",
+              message: "Job tracked via fallback — no BullMQ record. Check sessions_spawn output directly.",
+              fallback: true,
+            });
+          }
+
           return jsonResult({
             status: "not_found",
             error: `Job ${jobId} not found`,

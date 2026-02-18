@@ -25,6 +25,7 @@ export function createRedisOrchestratorService(state: PluginState): OpenClawPlug
   let dlqQueuesMap: Map<string, Queue> = new Map();
   let workersMap: Map<string, Worker> = new Map();
   let depGateWorker: Worker | null = null;
+  let bullBoardHandle: { addQueue: (queue: Queue) => void } | undefined;
 
   return {
     id: "redis-orchestrator",
@@ -106,8 +107,17 @@ export function createRedisOrchestratorService(state: PluginState): OpenClawPlug
 
         // Phase 3 Task 3.11: Mount Bull Board dashboard
         if (state.pluginApi) {
+          // Seed with DLQ queues + all agent queues from JobTracker
           const allQueues = Array.from(dlqQueuesMap.values());
-          mountBullBoard(state.pluginApi, allQueues);
+          bullBoardHandle = mountBullBoard(state.pluginApi, allQueues);
+
+          // Add worker queues (agent queues) to Bull Board
+          if (bullBoardHandle) {
+            for (const agentId of agentIds) {
+              const agentQueue = state.jobTracker!.getOrCreateQueue(`agent-${agentId}`);
+              bullBoardHandle.addQueue(agentQueue);
+            }
+          }
         }
 
         ctx.logger.info("redis-orchestrator: service started");

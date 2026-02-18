@@ -3,6 +3,10 @@
  *
  * Creates a BullMQ job in an agent queue and returns immediately.
  * The Worker service picks up jobs and launches child sessions.
+ *
+ * Phase 3 Task 3.12: When the circuit breaker is open (Redis down),
+ * falls back to direct sessions_spawn via callGateway so agent work
+ * continues even without Redis.
  */
 
 import { Type } from "@sinclair/typebox";
@@ -18,6 +22,8 @@ import { resolveAgentConfig } from "../../../../src/agents/agent-scope.js";
 import { getSubagentDepthFromSessionStore } from "../../../../src/agents/subagent-depth.js";
 // COUPLING: not in plugin-sdk — tracks src/utils/delivery-context.js. File SDK exposure request if this breaks.
 import { normalizeDeliveryContext } from "../../../../src/utils/delivery-context.js";
+// COUPLING: not in plugin-sdk — tracks src/gateway/call.js. File SDK exposure request if this breaks.
+import { callGateway } from "../../../../src/gateway/call.js";
 import type { PluginState } from "../../index.js";
 
 const QueueDispatchSchema = Type.Object({
@@ -39,6 +45,11 @@ const QueueDispatchSchema = Type.Object({
   ),
 });
 
+/** Simple warn logger — tool context doesn't expose logger, so use console */
+function warnLog(msg: string): void {
+  console.warn(`[redis-orchestrator] ${msg}`);
+}
+
 export function createQueueDispatchTool(
   state: PluginState,
   ctx: OpenClawPluginToolContext,
@@ -52,12 +63,57 @@ export function createQueueDispatchTool(
     execute: async (_toolCallId, args) => {
       const params = args as Record<string, unknown>;
 
-      // Validate plugin state
+      // Phase 3 Task 3.12: If Redis orchestrator never started (no connection at all),
+      // fall back to direct sessions_spawn immediately
       if (!state.jobTracker || !state.circuitBreaker || !state.connection) {
-        return jsonResult({
-          status: "error",
-          error: "Redis orchestrator is not running. Use sessions_spawn as fallback.",
-        });
+        warnLog(
+          `queue_dispatch: orchestrator not running — falling back to sessions_spawn for target=${normalizeAgentId(readStringParam(params, "target", { required: true }))}`,
+        );
+
+        // We still need to parse params and validate target before fallback
+        // Parse happens below, but we need target now for the fallback
+        const fallbackTarget = normalizeAgentId(readStringParam(params, "target", { required: true }));
+        const fallbackTask = readStringParam(params, "task", { required: true });
+        const fallbackLabel = readStringParam(params, "label");
+        const fallbackModel = readStringParam(params, "model");
+        const fallbackThinking = readStringParam(params, "thinking");
+        const fallbackCleanup =
+          params.cleanup === "keep" || params.cleanup === "delete" ? params.cleanup : "keep";
+        const fallbackTimeout =
+          typeof params.runTimeoutSeconds === "number" && Number.isFinite(params.runTimeoutSeconds)
+            ? Math.max(0, Math.floor(params.runTimeoutSeconds))
+            : 0;
+
+        try {
+          const spawnParams: Record<string, unknown> = {
+            task: fallbackTask,
+            agentId: fallbackTarget,
+            runTimeoutSeconds: fallbackTimeout || undefined,
+            cleanup: fallbackCleanup,
+          };
+          if (fallbackLabel) spawnParams.label = fallbackLabel;
+          if (fallbackModel) spawnParams.model = fallbackModel;
+          if (fallbackThinking) spawnParams.thinking = fallbackThinking;
+
+          const response = await callGateway<{ runId?: string }>({
+            method: "sessions.spawn",
+            params: spawnParams,
+            timeoutMs: 15_000,
+          });
+
+          return jsonResult({
+            jobId: response?.runId ?? `fallback-${Date.now()}`,
+            status: "dispatched",
+            target: fallbackTarget,
+            fallback: true,
+            fallbackReason: "orchestrator_unavailable",
+          });
+        } catch (fallbackErr) {
+          return jsonResult({
+            status: "error",
+            error: `Orchestrator unavailable and fallback failed: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`,
+          });
+        }
       }
 
       // Parse parameters
@@ -173,7 +229,7 @@ export function createQueueDispatchTool(
         accountId: ctx.agentAccountId,
       });
 
-      // Create BullMQ job via circuit breaker
+      // Create BullMQ job via circuit breaker, with sessions_spawn fallback
       try {
         const jobId = await state.circuitBreaker.dispatch(
           async () => {
@@ -195,12 +251,46 @@ export function createQueueDispatchTool(
               dependsOn,
             });
           },
+          // Phase 3 Task 3.12: Fallback to direct sessions_spawn when circuit is open
           async () => {
-            throw new Error(
-              "Redis circuit breaker is open. Use sessions_spawn as fallback.",
+            warnLog(
+              `queue_dispatch: circuit breaker open — falling back to sessions_spawn for target=${targetAgentId}`,
             );
+
+            const spawnParams: Record<string, unknown> = {
+              task,
+              agentId: targetAgentId,
+              runTimeoutSeconds: runTimeoutSeconds || undefined,
+              cleanup,
+            };
+            if (label) spawnParams.label = label;
+            if (model) spawnParams.model = model;
+            if (thinking) spawnParams.thinking = thinking;
+
+            const response = await callGateway<{ runId?: string; sessionKey?: string }>({
+              method: "sessions.spawn",
+              params: spawnParams,
+              timeoutMs: 15_000,
+            });
+
+            const fallbackRunId = response?.runId ?? `fallback-${Date.now()}`;
+
+            // Return a sentinel value that signals fallback mode
+            return `__fallback__:${fallbackRunId}`;
           },
         );
+
+        // Detect fallback vs normal path
+        if (typeof jobId === "string" && jobId.startsWith("__fallback__:")) {
+          const fallbackRunId = jobId.slice("__fallback__:".length);
+          return jsonResult({
+            jobId: fallbackRunId,
+            status: "dispatched",
+            target: targetAgentId,
+            fallback: true,
+            fallbackReason: "circuit_open",
+          });
+        }
 
         return jsonResult({
           jobId,
