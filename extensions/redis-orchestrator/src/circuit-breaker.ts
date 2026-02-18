@@ -58,6 +58,19 @@ export class QueueCircuitBreaker {
       return fallback();
     }
   }
+
+  /**
+   * Force the circuit breaker into open state.
+   * Used by external callers (e.g., Redis auth failure detection) to immediately
+   * trip the breaker without waiting for the normal failure threshold.
+   */
+  forceOpen(reason: string): void {
+    if (this.state === 'open') return; // Already open
+    this.state = 'open';
+    this.lastFailure = Date.now();
+    this.failures = this.config.failMax;
+    this.logger.error(`circuit-breaker: force-opened: ${reason}`);
+  }
   
   getState() {
     return {

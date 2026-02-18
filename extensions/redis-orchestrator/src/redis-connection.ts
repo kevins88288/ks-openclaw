@@ -22,7 +22,11 @@ export interface RedisConfig {
   password?: string;
 }
 
-export function createRedisConnection(config: RedisConfig, logger: PluginLogger): Redis {
+export function createRedisConnection(
+  config: RedisConfig,
+  logger: PluginLogger,
+  onAuthFailure?: () => void,
+): Redis {
   const connection = new Redis({
     host: config.host,
     port: config.port,
@@ -33,6 +37,10 @@ export function createRedisConnection(config: RedisConfig, logger: PluginLogger)
 
   connection.on("error", (err: Error) => {
     logger.warn(`redis: connection error: ${err.message}`);
+    // Detect Redis auth failures and notify caller
+    if (onAuthFailure && /NOAUTH|ERR AUTH/.test(err.message)) {
+      onAuthFailure();
+    }
   });
 
   connection.on("connect", () => {
