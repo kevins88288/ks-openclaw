@@ -4,6 +4,8 @@
  * openclaw queue stats
  * openclaw queue list [agent]
  * openclaw queue inspect <jobId>
+ * openclaw queue retry <jobId>
+ * openclaw queue drain <agent> --confirm
  */
 
 import type { Command } from "commander";
@@ -151,6 +153,99 @@ export function registerQueueCommands(program: Command, state: PluginState, ctx:
         }
       } catch (err) {
         console.error("Error listing jobs:", err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      } finally {
+        if (needsClose) {
+          await closeRedisConnection(connection, ctx.logger);
+        }
+      }
+    });
+
+  queue
+    .command("retry")
+    .description("Retry a failed job")
+    .argument("<jobId>", "Job ID to retry")
+    .action(async (jobId: string) => {
+      const [connection, needsClose] = getConnection(state, ctx);
+      try {
+        const queueNames = await getQueueNames(connection);
+
+        for (const queueName of queueNames) {
+          const q = new Queue(queueName, {
+            connection: asBullMQConnection(connection),
+            ...createQueueOptions(),
+          });
+
+          const job = await q.getJob(jobId);
+
+          if (job) {
+            const jobState = await job.getState();
+
+            if (jobState !== "failed") {
+              console.error(`Job ${jobId} is not in failed state (current state: ${jobState})`);
+              await q.close();
+              process.exit(1);
+            }
+
+            await job.retry(jobState);
+            const data = job.data;
+            console.log(`Job ${jobId} re-queued for agent ${data.target}`);
+            await q.close();
+            return;
+          }
+
+          await q.close();
+        }
+
+        console.error(`Job ${jobId} not found in any queue`);
+        process.exit(1);
+      } catch (err) {
+        console.error("Error retrying job:", err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      } finally {
+        if (needsClose) {
+          await closeRedisConnection(connection, ctx.logger);
+        }
+      }
+    });
+
+  queue
+    .command("drain")
+    .description("Remove all waiting/delayed jobs from an agent queue")
+    .argument("<agent>", "Agent ID to drain")
+    .option("--confirm", "Confirm drain operation (required)")
+    .action(async (agent: string, options: { confirm?: boolean }) => {
+      if (!options.confirm) {
+        console.error(
+          "Error: --confirm flag is required to drain a queue. This removes all waiting and delayed jobs.\n" +
+            `Usage: openclaw queue drain ${agent} --confirm`,
+        );
+        process.exit(1);
+      }
+
+      const [connection, needsClose] = getConnection(state, ctx);
+      try {
+        const queueName = `agent-${agent}`;
+        const q = new Queue(queueName, {
+          connection: asBullMQConnection(connection),
+          ...createQueueOptions(),
+        });
+
+        // Get counts before draining for reporting
+        const countsBefore = await q.getJobCounts("wait", "delayed");
+        const totalBefore = (countsBefore.wait || 0) + (countsBefore.delayed || 0);
+
+        // Drain waiting jobs
+        await q.drain();
+
+        // Clean delayed jobs
+        await q.clean(0, 0, "delayed");
+
+        console.log(`Drained ${totalBefore} jobs from agent ${agent}`);
+
+        await q.close();
+      } catch (err) {
+        console.error("Error draining queue:", err instanceof Error ? err.message : String(err));
         process.exit(1);
       } finally {
         if (needsClose) {
