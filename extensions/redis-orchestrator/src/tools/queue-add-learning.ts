@@ -41,6 +41,7 @@ export function createQueueAddLearningTool(
   ctx: OpenClawPluginToolContext,
 ): AnyAgentTool {
   return {
+    label: "Queue Learning",
     name: "queue_add_learning",
     description:
       "Record a learning from a completed job. Stored persistently in Redis under the project learning index. System agents only.",
@@ -54,6 +55,11 @@ export function createQueueAddLearningTool(
         tags: string[];
         previousJobId?: string;
       };
+
+      // Explicit 1KB enforcement (defense-in-depth against SDK schema validation gaps)
+      if (learning.length > 1024) {
+        return jsonResult({ status: "error", error: "Learning text exceeds 1KB limit (max 1024 chars)" });
+      }
 
       // Auth: system agents only
       if (!isSystemAgent(ctx.agentId)) {

@@ -151,7 +151,7 @@ export function createQueueListTool(
               }
 
               // Phase 3.5 Batch 2: project filter
-              if (projectFilter && jobData.project !== projectFilter) continue;
+              if (projectFilter && jobData.project?.toLowerCase() !== projectFilter.toLowerCase()) continue;
 
               const jobSummary: any = {
                 jobId: jobData.jobId || job.id,

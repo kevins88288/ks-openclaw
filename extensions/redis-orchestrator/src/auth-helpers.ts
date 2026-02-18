@@ -5,7 +5,7 @@
  */
 
 /** System agents that bypass authorization checks */
-const SYSTEM_AGENTS = new Set(["lucius", "main"]);
+const SYSTEM_AGENTS = new Set(["lucius", "ultron", "meta", "main"]);
 
 /**
  * Check if the given agentId is a system-level agent (bypasses auth restrictions).

@@ -16,7 +16,7 @@ import type {
   PluginHookAgentContext,
   PluginLogger,
 } from "openclaw/plugin-sdk";
-import type { Job } from "bullmq";
+import type { Job, Queue } from "bullmq";
 import type { PluginState } from '../index.js';
 import type { RedisOrchestratorConfig } from './config-schema.js';
 // COUPLING: not in plugin-sdk — tracks src/gateway/call.js. File SDK exposure request if this breaks.
@@ -190,14 +190,14 @@ export function createAgentEndHook(
 async function resolveJobFromSessionKey(
   state: PluginState,
   sessionKey: string,
-): Promise<{ job: Job; jobId: string; queueName: string } | null> {
+): Promise<{ job: Job; jobId: string; queueName: string; queue: Queue } | null> {
   const raw = await state.connection!.hget("bull:session-index", sessionKey);
   if (!raw) return null;
   const { jobId, queueName } = JSON.parse(raw);
   const queue = state.jobTracker!.getOrCreateQueue(queueName);
   const job = await queue.getJob(jobId);
   if (!job) return null;
-  return { job, jobId, queueName };
+  return { job, jobId, queueName, queue };
 }
 
 /**
@@ -223,7 +223,13 @@ async function handleAgentFailureRetry(
       return;
     }
 
-    const { job, jobId, queueName } = resolved;
+    const { job, jobId, queueName, queue } = resolved;
+
+    // Idempotency guard — handles double-fire of agent_end for the same session
+    if (job.data.status === "retrying" || job.data.retriedByJobId) {
+      logger.info(`redis-orchestrator: retry: job ${jobId} already retried (status: ${job.data.status}), skipping duplicate`);
+      return;
+    }
 
     const config = (state.pluginConfig ?? {}) as RedisOrchestratorConfig;
     const maxAttempts = config.retry?.agentFailureAttempts ?? 3;
@@ -251,6 +257,11 @@ async function handleAgentFailureRetry(
         },
         { delay: backoffDelay },
       );
+
+      // Patch the new job's jobId field to match its actual BullMQ ID
+      if (newJob.id) {
+        await newJob.updateData({ ...newJob.data, jobId: newJob.id });
+      }
 
       // Update the failed job to link forward to the retry
       await job.updateData({

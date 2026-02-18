@@ -35,6 +35,7 @@ export function createQueueLearningsTool(
   ctx: OpenClawPluginToolContext,
 ): AnyAgentTool {
   return {
+    label: "Queue Learnings",
     name: "queue_learnings",
     description:
       "Query learning entries by project, job, and/or tags. Returns entries ordered by timestamp descending.",
