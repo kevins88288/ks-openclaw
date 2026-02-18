@@ -94,6 +94,7 @@ export function createRedisOrchestratorService(state: PluginState): OpenClawPlug
 
         if (agentIds.length > 0) {
           workersMap = createWorkers(connection, agentIds, ctx.logger, state.jobTracker);
+          state.workersMap = workersMap;
           ctx.logger.info(`redis-orchestrator: started ${workersMap.size} workers`);
         }
 
@@ -111,6 +112,7 @@ export function createRedisOrchestratorService(state: PluginState): OpenClawPlug
       // Phase 2: Close all workers first (they hold jobs)
       if (workersMap.size > 0) {
         await closeWorkers(workersMap, ctx.logger);
+        state.workersMap = null;
         ctx.logger.info("redis-orchestrator: all workers closed");
       }
 

@@ -201,39 +201,42 @@ async function processJob(
     thinkingOverride = normalized;
   }
 
-  // 7. Patch session depth
-  await callGateway({
-    method: "sessions.patch",
-    params: { key: childSessionKey, spawnDepth: childDepth },
-    timeoutMs: 10_000,
-  });
-
-  // 8. Patch model
+  // 7-9. Patch session in a single call (depth + model + thinking)
+  // The gateway's sessions.patch handler accepts multiple fields at once,
+  // so we collapse 3 sequential round-trips into 1 (~60-70% latency reduction).
+  const patchParams: Record<string, unknown> = {
+    key: childSessionKey,
+    spawnDepth: childDepth,
+  };
   if (resolvedModel) {
-    try {
-      await callGateway({
-        method: "sessions.patch",
-        params: { key: childSessionKey, model: resolvedModel },
-        timeoutMs: 10_000,
-      });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      const recoverable = msg.includes("invalid model") || msg.includes("model not allowed");
-      if (!recoverable) throw err;
-      logger.warn(`worker: model patch warning for job ${job.id}: ${msg}`);
-    }
+    patchParams.model = resolvedModel;
+  }
+  if (thinkingOverride !== undefined) {
+    patchParams.thinkingLevel = thinkingOverride === "off" ? null : thinkingOverride;
   }
 
-  // 9. Patch thinking
-  if (thinkingOverride !== undefined) {
+  try {
     await callGateway({
       method: "sessions.patch",
-      params: {
-        key: childSessionKey,
-        thinkingLevel: thinkingOverride === "off" ? null : thinkingOverride,
-      },
+      params: patchParams,
       timeoutMs: 10_000,
     });
+  } catch (err) {
+    // If model patch fails with a recoverable error, retry without model
+    const msg = err instanceof Error ? err.message : String(err);
+    const modelRecoverable = resolvedModel && (msg.includes("invalid model") || msg.includes("model not allowed"));
+    if (modelRecoverable) {
+      logger.warn(`worker: model patch warning for job ${job.id}: ${msg}`);
+      // Retry without the model field
+      delete patchParams.model;
+      await callGateway({
+        method: "sessions.patch",
+        params: patchParams,
+        timeoutMs: 10_000,
+      });
+    } else {
+      throw err;
+    }
   }
 
   // 10. Build system prompt

@@ -120,3 +120,63 @@ All `../../../src/` and `../../../../src/` imports have `// COUPLING:` comments:
 - [x] `queue_dispatch` rejects when queue depth >= maxQueueDepth (configurable)
 - [x] DLQ alerts: task truncated to 200 chars, base64 stripped, dispatcherOrigin removed
 - [x] Circuit breaker `forceOpen()` fires on NOAUTH from ioredis error event
+
+---
+
+## Batch 3: Operational Hardening
+
+**Commit:** `a8fc650b7` — Phase 3 batch 3 — operational hardening (offline status, callGateway latency)
+
+### Task 3.7 — `queue_activity` offline agent status ✅
+
+Previously `queue_activity` never reported agents as `"offline"` — agents with no work were always shown as `"idle"`.
+
+**Changes:**
+1. **`index.ts`** — Added `workersMap: Map<string, Worker> | null` to `PluginState` interface
+2. **`service.ts`** — After `createWorkers()`, stores the map in `state.workersMap = workersMap`; clears it on `stop()`
+3. **`queue-activity.ts`** — For each agent, checks `state.workersMap?.get(agentId)`:
+   - No Worker entry (or workersMap is null) → `"offline"`
+   - Worker exists + `worker.isRunning()` returns false → `"offline"`
+   - Worker exists + active jobs > 0 → `"working"`
+   - Worker exists + no active jobs → `"idle"`
+
+### Task 3.8 — Reduce sequential `callGateway` latency ✅
+
+**Investigation:** The gateway's `sessions.patch` handler (`src/gateway/sessions-patch.ts`) processes all patch fields from a single params object — `spawnDepth`, `model`, `thinkingLevel`, etc. are all handled in one call via `applySessionsPatchToStore()`.
+
+**Approach: Collapse 3 calls → 1 call (~60-70% latency reduction)**
+
+Before (3 sequential round-trips):
+```
+callGateway("sessions.patch", { key, spawnDepth })    // ~RTT
+callGateway("sessions.patch", { key, model })          // ~RTT
+callGateway("sessions.patch", { key, thinkingLevel })  // ~RTT
+```
+
+After (1 round-trip):
+```
+callGateway("sessions.patch", { key, spawnDepth, model, thinkingLevel })  // ~RTT
+```
+
+**Error handling preserved:** If the combined patch fails due to a recoverable model error (`"invalid model"` / `"model not allowed"`), the worker retries without the `model` field (same behavior as before, just one extra call instead of the original three).
+
+**Latency reduction:**
+- Best case (no model error): 3 RTTs → 1 RTT = **~67% reduction**
+- Worst case (model error): 3 RTTs → 2 RTTs = **~33% reduction**
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `index.ts` | Added `workersMap` to PluginState, import `Worker` type |
+| `src/service.ts` | Store `workersMap` in `state.workersMap` after creation, clear on stop |
+| `src/tools/queue-activity.ts` | Check `state.workersMap` for offline/idle/working status |
+| `src/worker.ts` | Collapsed 3 sequential `sessions.patch` calls into 1 combined call |
+
+### Acceptance Criteria
+
+- [x] `queue_activity` reports `"offline"` for agents with no Worker in workersMap
+- [x] `queue_activity` reports `"idle"` for agents with a Worker but no active jobs
+- [x] `queue_activity` reports `"working"` for agents with active jobs
+- [x] `callGateway` round-trips during job processing reduced (3→1, ~67% reduction)
+- [x] No change in job processing correctness — same result, fewer round trips

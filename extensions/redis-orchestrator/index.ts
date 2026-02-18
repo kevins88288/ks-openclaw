@@ -9,6 +9,7 @@
  */
 
 import type { OpenClawPluginApi, OpenClawPluginDefinition } from "openclaw/plugin-sdk";
+import type { Worker } from "bullmq";
 import type { QueueCircuitBreaker } from "./src/circuit-breaker.js";
 import type { DLQAlerter } from "./src/dlq-alerting.js";
 import type { JobTracker } from "./src/job-tracker.js";
@@ -37,6 +38,7 @@ export interface PluginState {
   jobTracker: JobTracker | null;
   dlqAlerter: DLQAlerter | null;
   pluginConfig: Record<string, unknown> | undefined;
+  workersMap: Map<string, Worker> | null;
 }
 
 const state: PluginState = {
@@ -45,6 +47,7 @@ const state: PluginState = {
   jobTracker: null,
   dlqAlerter: null,
   pluginConfig: undefined,
+  workersMap: null,
 };
 
 const plugin: OpenClawPluginDefinition = {

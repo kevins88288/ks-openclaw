@@ -87,12 +87,18 @@ export function createQueueActivityTool(
           summary.completedTotal += completedTotal;
           summary.failedTotal += failedTotal;
 
-          // Get active job details (if any)
+          // Determine agent status based on Worker presence and job activity
           let activeJobInfo: any = null;
           let agentStatus: "working" | "idle" | "offline" = "idle";
           let since: string | undefined;
 
-          if (activeCount > 0) {
+          // Check if this agent has a running Worker
+          const worker = state.workersMap?.get(agentId);
+          const hasRunningWorker = worker != null && (typeof worker.isRunning === "function" ? worker.isRunning() : true);
+
+          if (!hasRunningWorker) {
+            agentStatus = "offline";
+          } else if (activeCount > 0) {
             const activeJobs = await queue.getJobs(["active"], 0, 0);
             if (activeJobs.length > 0) {
               const job = activeJobs[0];
@@ -109,10 +115,8 @@ export function createQueueActivityTool(
                 since = formatRelativeTime(jobData.startedAt);
               }
             }
-          } else if (pendingCount > 0) {
-            agentStatus = "idle"; // Has pending work but not processing
           } else {
-            agentStatus = "idle"; // No work at all
+            agentStatus = "idle";
           }
 
           agents[agentId] = {
