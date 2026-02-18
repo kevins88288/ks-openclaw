@@ -4,12 +4,9 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "enabled": {
-        "type": "boolean",
-        "default": true
-      },
       "redis": {
         "type": "object",
+        "additionalProperties": false,
         "properties": {
           "host": {
             "type": "string",
@@ -21,11 +18,16 @@
           },
           "password": {
             "type": "string"
+          },
+          "tls": {
+            "type": "boolean",
+            "default": false
           }
         }
       },
       "circuitBreaker": {
         "type": "object",
+        "additionalProperties": false,
         "properties": {
           "failureThreshold": {
             "type": "number",
@@ -37,8 +39,23 @@
           }
         }
       },
+      "rateLimit": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "dispatchesPerMinute": {
+            "type": "number",
+            "default": 10
+          },
+          "maxQueueDepth": {
+            "type": "number",
+            "default": 50
+          }
+        }
+      },
       "dlq": {
         "type": "object",
+        "additionalProperties": false,
         "properties": {
           "alertChannel": {
             "type": "string",

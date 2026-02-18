@@ -27,24 +27,36 @@ import type { PluginLogger } from "openclaw/plugin-sdk";
 import { Worker, UnrecoverableError, type Job } from "bullmq";
 import crypto from "node:crypto";
 import type { AgentJob } from "./types.js";
+// COUPLING: not in plugin-sdk — tracks src/agents/agent-scope.js. File SDK exposure request if this breaks.
 import { resolveAgentConfig } from "../../../src/agents/agent-scope.js";
+// COUPLING: not in plugin-sdk — tracks src/agents/lanes.js. File SDK exposure request if this breaks.
 import { AGENT_LANE_SUBAGENT } from "../../../src/agents/lanes.js";
+// COUPLING: not in plugin-sdk — tracks src/agents/model-selection.js. File SDK exposure request if this breaks.
 import { resolveDefaultModelForAgent } from "../../../src/agents/model-selection.js";
+// COUPLING: not in plugin-sdk — tracks src/agents/subagent-announce.js. File SDK exposure request if this breaks.
 import { buildSubagentSystemPrompt } from "../../../src/agents/subagent-announce.js";
+// COUPLING: not in plugin-sdk — tracks src/agents/subagent-depth.js. File SDK exposure request if this breaks.
 import { getSubagentDepthFromSessionStore } from "../../../src/agents/subagent-depth.js";
+// COUPLING: not in plugin-sdk — tracks src/agents/subagent-registry.js. File SDK exposure request if this breaks.
 import {
   registerSubagentRun,
   countActiveRunsForSession,
 } from "../../../src/agents/subagent-registry.js";
+// COUPLING: not in plugin-sdk — tracks src/agents/tools/sessions-helpers.js. File SDK exposure request if this breaks.
 import {
   resolveDisplaySessionKey,
   resolveInternalSessionKey,
   resolveMainSessionAlias,
 } from "../../../src/agents/tools/sessions-helpers.js";
+// COUPLING: not in plugin-sdk — tracks src/auto-reply/thinking.js. File SDK exposure request if this breaks.
 import { normalizeThinkLevel } from "../../../src/auto-reply/thinking.js";
+// COUPLING: not in plugin-sdk — tracks src/config/config.js. File SDK exposure request if this breaks.
 import { loadConfig } from "../../../src/config/config.js";
+// COUPLING: not in plugin-sdk — tracks src/gateway/call.js. File SDK exposure request if this breaks.
 import { callGateway } from "../../../src/gateway/call.js";
+// COUPLING: not in plugin-sdk — tracks src/routing/session-key.js. File SDK exposure request if this breaks.
 import { normalizeAgentId, parseAgentSessionKey } from "../../../src/routing/session-key.js";
+// COUPLING: not in plugin-sdk — tracks src/utils/delivery-context.js. File SDK exposure request if this breaks.
 import { normalizeDeliveryContext } from "../../../src/utils/delivery-context.js";
 import { createWorkerOptions } from "./queue-config.js";
 import { asBullMQConnection, type RedisConnection } from "./redis-connection.js";

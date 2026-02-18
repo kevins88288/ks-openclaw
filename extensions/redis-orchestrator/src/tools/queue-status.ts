@@ -3,14 +3,16 @@
  *
  * Look up the status of a specific job by jobId.
  * Uses the Redis job index for O(1) lookup.
+ *
+ * Phase 3: Cross-agent authorization — agents can only see jobs they dispatched or that target them.
  */
 
 import { Type } from "@sinclair/typebox";
-import type { OpenClawPluginToolContext } from "openclaw/plugin-sdk";
-import type { AnyAgentTool } from "../../../../src/agents/tools/common.js";
-import { jsonResult, readStringParam } from "../../../../src/agents/tools/common.js";
+import type { OpenClawPluginToolContext, AnyAgentTool } from "openclaw/plugin-sdk";
+import { jsonResult, readStringParam } from "openclaw/plugin-sdk";
 import type { PluginState } from "../../index.js";
 import { formatRelativeTime } from "../utils.js";
+import { isSystemAgent, stripSensitiveFields } from "../auth-helpers.js";
 
 const QueueStatusSchema = Type.Object({
   jobId: Type.String({ description: "Job ID to look up" }),
@@ -38,6 +40,7 @@ export function createQueueStatusTool(
       }
 
       const jobId = readStringParam(params, "jobId", { required: true });
+      const callerAgentId = ctx.agentId ?? "";
 
       try {
         // Use jobTracker.findJobByRunId which uses the Redis index
@@ -48,6 +51,18 @@ export function createQueueStatusTool(
             status: "not_found",
             error: `Job ${jobId} not found`,
           });
+        }
+
+        // Phase 3 Task 3.3: Cross-agent authorization
+        if (!isSystemAgent(callerAgentId)) {
+          const isDispatcher = jobData.dispatchedBy === callerAgentId;
+          const isTarget = jobData.target === callerAgentId;
+          if (!isDispatcher && !isTarget) {
+            return jsonResult({
+              status: "unauthorized",
+              error: "Unauthorized: you can only view jobs you dispatched or that target you.",
+            });
+          }
         }
 
         // Format timestamps
@@ -101,7 +116,8 @@ export function createQueueStatusTool(
           result.project = jobData.project;
         }
 
-        return jsonResult(result);
+        // Strip sensitive fields for non-system agents
+        return jsonResult(stripSensitiveFields(result, callerAgentId));
       } catch (err) {
         return jsonResult({
           status: "error",

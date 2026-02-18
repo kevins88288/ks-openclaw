@@ -2,18 +2,23 @@
  * queue_list Tool — Phase 2 Batch 2
  *
  * List jobs across agent queues with optional filtering by agent and status.
+ *
+ * Phase 3: Cross-agent authorization — agents only see jobs they dispatched or that target them.
  */
 
 import { Type } from "@sinclair/typebox";
-import type { OpenClawPluginToolContext } from "openclaw/plugin-sdk";
-import type { AnyAgentTool } from "../../../../src/agents/tools/common.js";
-import { jsonResult, readStringParam, readNumberParam } from "../../../../src/agents/tools/common.js";
+import type { OpenClawPluginToolContext, AnyAgentTool } from "openclaw/plugin-sdk";
+import { jsonResult, readStringParam, readNumberParam } from "openclaw/plugin-sdk";
+// COUPLING: not in plugin-sdk — tracks src/routing/session-key.js. File SDK exposure request if this breaks.
 import { normalizeAgentId } from "../../../../src/routing/session-key.js";
+// COUPLING: not in plugin-sdk — tracks src/config/config.js. File SDK exposure request if this breaks.
 import { loadConfig } from "../../../../src/config/config.js";
+// COUPLING: not in plugin-sdk — tracks src/agents/agent-scope.js. File SDK exposure request if this breaks.
 import { listAgentIds } from "../../../../src/agents/agent-scope.js";
 import type { PluginState } from "../../index.js";
 import type { AgentJob } from "../types.js";
 import { formatRelativeTime, truncateTask } from "../utils.js";
+import { isSystemAgent, stripSensitiveFields } from "../auth-helpers.js";
 
 const QueueListSchema = Type.Object({
   agent: Type.Optional(Type.String({ description: "Filter by agent ID (optional)" })),
@@ -81,6 +86,8 @@ export function createQueueListTool(
       const statusFilter = readStringParam(params, "status");
       const limit = readNumberParam(params, "limit") ?? 20;
       const cappedLimit = Math.min(Math.max(1, Math.floor(limit)), 100);
+      const callerAgentId = ctx.agentId ?? "";
+      const callerIsSystem = isSystemAgent(callerAgentId);
 
       const cfg = loadConfig();
 
@@ -110,30 +117,43 @@ export function createQueueListTool(
           target: string;
           task: string;
           status: string;
+          dispatchedBy: string;
           queuedAt: string;
           queuedAtMs: number;
           startedAt?: string;
           completedAt?: string;
           label?: string;
+          openclawSessionKey?: string;
         }> = [];
 
-        // Query each agent queue
+        // Query each agent queue — fetch more than limit to allow for auth filtering
+        const fetchMultiplier = callerIsSystem ? 1 : 3;
+
         for (const agentId of agentIds) {
           const queueName = `agent-${agentId}`;
           const queue = state.jobTracker.getOrCreateQueue(queueName);
 
           for (const bullState of bullMQStates) {
-            const jobs = await queue.getJobs([bullState], 0, cappedLimit - 1);
+            const jobs = await queue.getJobs([bullState], 0, (cappedLimit * fetchMultiplier) - 1);
 
             for (const job of jobs) {
               if (allJobs.length >= cappedLimit) break;
 
               const jobData = job.data as AgentJob;
+
+              // Phase 3 Task 3.3: Cross-agent authorization — filter to only visible jobs
+              if (!callerIsSystem) {
+                const isDispatcher = jobData.dispatchedBy === callerAgentId;
+                const isTarget = jobData.target === callerAgentId;
+                if (!isDispatcher && !isTarget) continue;
+              }
+
               const jobSummary: any = {
                 jobId: jobData.jobId || job.id,
                 target: jobData.target,
                 task: truncateTask(jobData.task),
                 status: jobData.status,
+                dispatchedBy: jobData.dispatchedBy,
                 queuedAt: formatRelativeTime(jobData.queuedAt),
                 queuedAtMs: jobData.queuedAt,
               };
@@ -150,6 +170,10 @@ export function createQueueListTool(
                 jobSummary.label = jobData.label;
               }
 
+              if (jobData.openclawSessionKey) {
+                jobSummary.openclawSessionKey = jobData.openclawSessionKey;
+              }
+
               allJobs.push(jobSummary);
             }
 
@@ -162,8 +186,10 @@ export function createQueueListTool(
         // Sort by queuedAt timestamp descending (newest first)
         allJobs.sort((a, b) => b.queuedAtMs - a.queuedAtMs);
 
-        // Remove raw timestamp from output
-        const jobs = allJobs.map(({ queuedAtMs, ...job }) => job);
+        // Remove raw timestamp + strip sensitive fields for non-system agents
+        const jobs = allJobs.map(({ queuedAtMs, ...job }) =>
+          stripSensitiveFields(job, callerAgentId),
+        );
 
         return jsonResult({
           jobs,

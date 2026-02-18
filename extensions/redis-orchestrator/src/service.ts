@@ -15,6 +15,7 @@ import { createQueueOptions } from "./queue-config.js";
 import { asBullMQConnection, type RedisConnection } from "./redis-connection.js";
 import { createRedisConnection, closeRedisConnection } from "./redis-connection.js";
 import { createWorkers, closeWorkers } from "./worker.js";
+// COUPLING: not in plugin-sdk — tracks src/agents/agent-scope.js. File SDK exposure request if this breaks.
 import { listAgentIds } from "../../../src/agents/agent-scope.js";
 
 export function createRedisOrchestratorService(state: PluginState): OpenClawPluginService {
@@ -26,25 +27,24 @@ export function createRedisOrchestratorService(state: PluginState): OpenClawPlug
     id: "redis-orchestrator",
 
     async start(ctx: OpenClawPluginServiceContext) {
-      const pluginEntry = (ctx.config.plugins as any)?.entries?.["redis-orchestrator"];
+      // Read config from state.pluginConfig (set by register() from api.pluginConfig)
+      const pluginConfig = state.pluginConfig as Record<string, any> | undefined;
 
-      if (pluginEntry?.enabled === false) {
-        ctx.logger.info("redis-orchestrator: disabled by config");
-        return;
-      }
+      // Check if explicitly disabled (enabled field may be at the entry level, not config level)
+      // The loader handles enabled/disabled at the entry level, so if we get here, we're enabled.
 
-      // Plugin config lives under entries.<id>.config in OpenClaw's config structure
-      const pluginConfig = pluginEntry?.config;
+      const redisSection = pluginConfig?.redis as Record<string, unknown> | undefined;
+      const cbSection = pluginConfig?.circuitBreaker as Record<string, unknown> | undefined;
 
       const redisConfig = {
-        host: pluginConfig?.redis?.host || "127.0.0.1",
-        port: pluginConfig?.redis?.port || 6379,
-        password: pluginConfig?.redis?.password || process.env.REDIS_PASSWORD,
+        host: (redisSection?.host as string) || "127.0.0.1",
+        port: (redisSection?.port as number) || 6379,
+        password: (redisSection?.password as string) || process.env.REDIS_PASSWORD,
       };
 
       const circuitBreakerConfig = {
-        failMax: pluginConfig?.circuitBreaker?.failureThreshold || 5,
-        resetTimeout: pluginConfig?.circuitBreaker?.resetTimeout || 30000,
+        failMax: (cbSection?.failureThreshold as number) || 5,
+        resetTimeout: (cbSection?.resetTimeout as number) || 30000,
       };
 
       try {
@@ -73,8 +73,15 @@ export function createRedisOrchestratorService(state: PluginState): OpenClawPlug
         // Populate shared state — hooks read from this at call time
         state.connection = connection;
         state.circuitBreaker = new QueueCircuitBreaker(circuitBreakerConfig, ctx.logger);
-        state.jobTracker = new JobTracker(connection, ctx.logger);
         state.dlqAlerter = new DLQAlerter(ctx.logger);
+        state.jobTracker = new JobTracker(connection, ctx.logger);
+
+        // Wire up auth failure callback now that circuit breaker exists
+        connection.on("error", (err: Error) => {
+          if (/NOAUTH|ERR AUTH/.test(err.message) && state.circuitBreaker) {
+            state.circuitBreaker.forceOpen(`Redis auth failure: ${err.message}`);
+          }
+        });
 
         // Set up DLQ event listeners for all agent queues
         await setupDLQListeners(connection, state.dlqAlerter, ctx, queueEventsMap, dlqQueuesMap);

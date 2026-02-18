@@ -6,10 +6,11 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import type { OpenClawPluginToolContext } from "openclaw/plugin-sdk";
-import type { AnyAgentTool } from "../../../../src/agents/tools/common.js";
-import { jsonResult } from "../../../../src/agents/tools/common.js";
+import type { OpenClawPluginToolContext, AnyAgentTool } from "openclaw/plugin-sdk";
+import { jsonResult } from "openclaw/plugin-sdk";
+// COUPLING: not in plugin-sdk — tracks src/config/config.js. File SDK exposure request if this breaks.
 import { loadConfig } from "../../../../src/config/config.js";
+// COUPLING: not in plugin-sdk — tracks src/agents/agent-scope.js. File SDK exposure request if this breaks.
 import { listAgentIds } from "../../../../src/agents/agent-scope.js";
 import type { PluginState } from "../../index.js";
 import type { AgentJob } from "../types.js";

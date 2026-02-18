@@ -6,15 +6,18 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import type { OpenClawPluginToolContext } from "openclaw/plugin-sdk";
-import type { AnyAgentTool } from "../../../../src/agents/tools/common.js";
-import { jsonResult, readStringParam } from "../../../../src/agents/tools/common.js";
+import type { OpenClawPluginToolContext, AnyAgentTool } from "openclaw/plugin-sdk";
+import { jsonResult, readStringParam, optionalStringEnum } from "openclaw/plugin-sdk";
+// COUPLING: not in plugin-sdk — tracks src/config/config.js. File SDK exposure request if this breaks.
 import { loadConfig } from "../../../../src/config/config.js";
+// COUPLING: not in plugin-sdk — tracks src/routing/session-key.js. File SDK exposure request if this breaks.
 import { normalizeAgentId, parseAgentSessionKey } from "../../../../src/routing/session-key.js";
+// COUPLING: not in plugin-sdk — tracks src/agents/agent-scope.js. File SDK exposure request if this breaks.
 import { resolveAgentConfig } from "../../../../src/agents/agent-scope.js";
+// COUPLING: not in plugin-sdk — tracks src/agents/subagent-depth.js. File SDK exposure request if this breaks.
 import { getSubagentDepthFromSessionStore } from "../../../../src/agents/subagent-depth.js";
+// COUPLING: not in plugin-sdk — tracks src/utils/delivery-context.js. File SDK exposure request if this breaks.
 import { normalizeDeliveryContext } from "../../../../src/utils/delivery-context.js";
-import { optionalStringEnum } from "../../../../src/agents/schema/typebox.js";
 import type { PluginState } from "../../index.js";
 
 const QueueDispatchSchema = Type.Object({
@@ -44,7 +47,7 @@ export function createQueueDispatchTool(
       const params = args as Record<string, unknown>;
 
       // Validate plugin state
-      if (!state.jobTracker || !state.circuitBreaker) {
+      if (!state.jobTracker || !state.circuitBreaker || !state.connection) {
         return jsonResult({
           status: "error",
           error: "Redis orchestrator is not running. Use sessions_spawn as fallback.",
@@ -109,6 +112,43 @@ export function createQueueDispatchTool(
           return jsonResult({
             status: "forbidden",
             error: `Target agent "${targetAgentId}" is not in allowAgents (allowed: ${allowedText})`,
+          });
+        }
+      }
+
+      // --- Rate limiting (Phase 3 Task 3.4) ---
+      const callerAgentId = dispatcherAgentId;
+      const pluginConfig = state.pluginConfig as Record<string, any> | undefined;
+      const rateLimitConfig = pluginConfig?.rateLimit as Record<string, unknown> | undefined;
+      const dispatchesPerMinute = (rateLimitConfig?.dispatchesPerMinute as number) ?? 10;
+      const maxQueueDepth = (rateLimitConfig?.maxQueueDepth as number) ?? 50;
+
+      // Check per-agent rate limit (Redis-based counter with 60s TTL)
+      if (dispatchesPerMinute > 0) {
+        const rateLimitKey = `ratelimit:dispatch:${callerAgentId}`;
+        const current = await state.connection.incr(rateLimitKey);
+        if (current === 1) {
+          // First dispatch in this window — set TTL
+          await state.connection.expire(rateLimitKey, 60);
+        }
+        if (current > dispatchesPerMinute) {
+          return jsonResult({
+            status: "rate_limited",
+            error: `Rate limit exceeded: ${current}/${dispatchesPerMinute} dispatches this minute`,
+          });
+        }
+      }
+
+      // Check per-agent queue depth cap
+      if (maxQueueDepth > 0) {
+        const targetQueueName = `agent-${targetAgentId}`;
+        const targetQueue = state.jobTracker.getOrCreateQueue(targetQueueName);
+        const counts = await targetQueue.getJobCounts("wait", "delayed", "active");
+        const pendingCount = (counts.wait || 0) + (counts.delayed || 0) + (counts.active || 0);
+        if (pendingCount >= maxQueueDepth) {
+          return jsonResult({
+            status: "queue_full",
+            error: `Queue depth exceeded: ${pendingCount}/${maxQueueDepth} pending jobs for agent ${targetAgentId}`,
           });
         }
       }

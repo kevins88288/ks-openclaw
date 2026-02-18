@@ -13,6 +13,7 @@ import type { QueueCircuitBreaker } from "./src/circuit-breaker.js";
 import type { DLQAlerter } from "./src/dlq-alerting.js";
 import type { JobTracker } from "./src/job-tracker.js";
 import type { RedisConnection } from "./src/redis-connection.js";
+import { redisOrchestratorConfigSchema } from "./src/config-schema.js";
 import { registerQueueCommands } from "./src/cli-commands.js";
 import {
   createAfterToolCallHook,
@@ -35,6 +36,7 @@ export interface PluginState {
   circuitBreaker: QueueCircuitBreaker | null;
   jobTracker: JobTracker | null;
   dlqAlerter: DLQAlerter | null;
+  pluginConfig: Record<string, unknown> | undefined;
 }
 
 const state: PluginState = {
@@ -42,6 +44,7 @@ const state: PluginState = {
   circuitBreaker: null,
   jobTracker: null,
   dlqAlerter: null,
+  pluginConfig: undefined,
 };
 
 const plugin: OpenClawPluginDefinition = {
@@ -50,8 +53,13 @@ const plugin: OpenClawPluginDefinition = {
   description: "BullMQ-based orchestration layer for durable agent job tracking",
   version: "1.0.0",
 
+  configSchema: redisOrchestratorConfigSchema,
+
   register(api: OpenClawPluginApi) {
     api.logger.info("redis-orchestrator: registering plugin");
+
+    // Capture pluginConfig from the platform (validated by configSchema.safeParse)
+    state.pluginConfig = api.pluginConfig;
 
     // Register the background service — it owns init/teardown of shared state
     api.registerService(createRedisOrchestratorService(state));
