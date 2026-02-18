@@ -26,6 +26,8 @@ import { createQueueDispatchTool } from "./src/tools/queue-dispatch.js";
 import { createQueueStatusTool } from "./src/tools/queue-status.js";
 import { createQueueListTool } from "./src/tools/queue-list.js";
 import { createQueueActivityTool } from "./src/tools/queue-activity.js";
+import { createQueueAddLearningTool } from "./src/tools/queue-add-learning.js";
+import { createQueueLearningsTool } from "./src/tools/queue-learnings.js";
 
 /**
  * Shared mutable state container.
@@ -96,6 +98,15 @@ const plugin: OpenClawPluginDefinition = {
 
     api.registerTool((ctx) => createQueueActivityTool(state, ctx), {
       name: "queue_activity",
+    });
+
+    // Phase 3.5 Batch 3: Register learning index tools
+    api.registerTool((ctx) => createQueueAddLearningTool(state, ctx), {
+      name: "queue_add_learning",
+    });
+
+    api.registerTool((ctx) => createQueueLearningsTool(state, ctx), {
+      name: "queue_learnings",
     });
 
     // Register CLI commands — connection created lazily inside each command

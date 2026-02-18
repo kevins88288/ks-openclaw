@@ -88,3 +88,19 @@ export interface CircuitBreakerState {
   failures: number;
   lastFailure: number;
 }
+
+/**
+ * A learning entry stored in the Redis learning index.
+ * Phase 3.5 Batch 3.
+ */
+export interface LearningEntry {
+  id: string;
+  jobId: string;
+  previousJobId?: string;
+  projectId: string;
+  phase?: string;
+  agentId: string;
+  learning: string;
+  tags: string[];
+  timestamp: number;
+}

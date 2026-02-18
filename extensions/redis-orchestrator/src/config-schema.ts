@@ -87,6 +87,20 @@ export const RedisOrchestratorConfigType = Type.Object(
         { additionalProperties: false },
       ),
     ),
+    learnings: Type.Optional(
+      Type.Object(
+        {
+          ttlDays: Type.Optional(
+            Type.Number({
+              default: 365,
+              minimum: 1,
+              description: "TTL in days for individual learning entries (default: 365)",
+            }),
+          ),
+        },
+        { additionalProperties: false },
+      ),
+    ),
   },
   { additionalProperties: false },
 );
@@ -190,6 +204,13 @@ const jsonSchema: Record<string, unknown> = {
       properties: {
         agentFailureAttempts: { type: "number", default: 3 },
         agentFailureBaseDelayMs: { type: "number", default: 300000 },
+      },
+    },
+    learnings: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        ttlDays: { type: "number", default: 365 },
       },
     },
   },
