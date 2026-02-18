@@ -80,10 +80,15 @@ export function mountBullBoard(
 
     // Delegate to Express app (handles /queue/*)
     return new Promise<boolean>((resolve) => {
-      app(req, res, () => {
-        // If Express doesn't handle it (next() called), mark as unhandled
-        resolve(false);
-      });
+      // Cast: gateway passes IncomingMessage, Express expects its own Request supertype
+      app(
+        req as unknown as import("express").Request,
+        res as unknown as import("express").Response,
+        () => {
+          // If Express doesn't handle it (next() called), mark as unhandled
+          resolve(false);
+        },
+      );
       // Express handled it if next() was never called
       // We detect completion when the response finishes
       res.once("finish", () => resolve(true));

@@ -8,7 +8,10 @@
 
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import type { OpenClawPluginConfigSchema } from "openclaw/plugin-sdk";
+// NOTE: OpenClawPluginConfigSchema is not yet exported from openclaw/plugin-sdk.
+// COUPLING: The inferred type of redisOrchestratorConfigSchema must remain structurally
+// compatible with src/plugins/types.OpenClawPluginConfigSchema. If that type changes,
+// update safeParse/jsonSchema shape accordingly.
 
 export const RedisOrchestratorConfigType = Type.Object(
   {
@@ -54,9 +57,11 @@ export const RedisOrchestratorConfigType = Type.Object(
     bullBoard: Type.Optional(
       Type.Object(
         {
-          authToken: Type.Optional(Type.String({
-            description: "Bearer token for Bull Board UI access. If unset, endpoint is disabled.",
-          })),
+          authToken: Type.Optional(
+            Type.String({
+              description: "Bearer token for Bull Board UI access. If unset, endpoint is disabled.",
+            }),
+          ),
         },
         { additionalProperties: false },
       ),
@@ -161,7 +166,8 @@ const jsonSchema: Record<string, unknown> = {
   },
 };
 
-export const redisOrchestratorConfigSchema: OpenClawPluginConfigSchema = {
+// Inferred type is structurally compatible with OpenClawPluginConfigSchema from src/plugins/types
+export const redisOrchestratorConfigSchema = {
   safeParse,
   jsonSchema,
 };
