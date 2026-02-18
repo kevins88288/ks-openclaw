@@ -53,6 +53,21 @@ export function createQueueStatusTool(
           });
         }
 
+        // Phase 3 Task 3.10: Check if job is waiting for dependencies
+        let waitingForDependencies = false;
+        if (jobData.dependsOn && jobData.dependsOn.length > 0) {
+          // Check BullMQ job state — "waiting-children" means dependencies haven't completed
+          const queueName = await state.jobTracker.findQueueForJob(jobId);
+          if (queueName) {
+            const queue = state.jobTracker.getOrCreateQueue(queueName);
+            const bullJob = await queue.getJob(jobId);
+            if (bullJob) {
+              const bullState = await bullJob.getState();
+              waitingForDependencies = bullState === "waiting-children";
+            }
+          }
+        }
+
         // Phase 3 Task 3.3: Cross-agent authorization
         if (!isSystemAgent(callerAgentId)) {
           const isDispatcher = jobData.dispatchedBy === callerAgentId;
@@ -114,6 +129,12 @@ export function createQueueStatusTool(
 
         if (jobData.project) {
           result.project = jobData.project;
+        }
+
+        // Phase 3 Task 3.10: Include dependency info
+        if (jobData.dependsOn && jobData.dependsOn.length > 0) {
+          result.dependsOn = jobData.dependsOn;
+          result.waitingForDependencies = waitingForDependencies;
         }
 
         // Strip sensitive fields for non-system agents

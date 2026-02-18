@@ -3,21 +3,38 @@
  *
  * Hooks into sessions_spawn and agent_end to track job lifecycle.
  * Uses runId as BullMQ jobId for direct lookup — no in-memory maps needed.
+ *
+ * Phase 3 Task 3.10: FlowProducer dependency chains (parent-child, fail-fast).
+ * When `dependsOn` is provided, uses FlowProducer to create dependency-gate
+ * children that poll referenced jobs. The parent (dependent job) stays in
+ * waiting-children state until all gates complete. If a dependency fails,
+ * its gate child fails, and the parent is never processed (fail-fast).
  */
 
 import type { PluginLogger } from "openclaw/plugin-sdk";
-import { Queue } from "bullmq";
+import { Queue, FlowProducer } from "bullmq";
 import type { AgentJob } from "./types.js";
 import { createQueueOptions, DEFAULT_JOB_TIMEOUT_MS } from "./queue-config.js";
 import { asBullMQConnection, type RedisConnection } from "./redis-connection.js";
 
 export class JobTracker {
   private queues: Map<string, Queue> = new Map();
+  private flowProducer: FlowProducer | null = null;
 
   constructor(
     private connection: RedisConnection,
     private logger: PluginLogger,
   ) {}
+
+  private getFlowProducer(): FlowProducer {
+    if (!this.flowProducer) {
+      this.flowProducer = new FlowProducer({
+        connection: asBullMQConnection(this.connection),
+        prefix: "bull",
+      });
+    }
+    return this.flowProducer;
+  }
 
   private getQueueForAgent(agentId: string): Queue {
     const queueName = `agent-${agentId}`;
@@ -56,6 +73,7 @@ export class JobTracker {
     model?: string;
     thinking?: string;
     cleanup?: 'delete' | 'keep';
+    dependsOn?: string[];
   }): Promise<string> {
     const queue = this.getQueueForAgent(params.target);
 
@@ -79,12 +97,20 @@ export class JobTracker {
       model: params.model,
       thinking: params.thinking,
       cleanup: params.cleanup,
+      dependsOn: params.dependsOn,
     };
 
     const addOpts: Record<string, unknown> = {};
     if (params.runId) {
       // Phase 1: use runId as BullMQ jobId for idempotent tracking
       addOpts.jobId = params.runId;
+    }
+
+    // If dependsOn is specified, use FlowProducer for dependency chains
+    if (params.dependsOn && params.dependsOn.length > 0) {
+      const jobId = await this.createJobWithDependencies(queue, jobData, addOpts, params.dependsOn);
+      this.logger.info(`job-tracker: created job ${jobId} for ${params.target} (depends on: ${params.dependsOn.join(", ")})`);
+      return jobId;
     }
 
     const job = await queue.add("agent-run", jobData, addOpts);
@@ -99,6 +125,67 @@ export class JobTracker {
     await this.indexJob(jobId, queue.name);
 
     this.logger.info(`job-tracker: created job ${jobId} for ${params.target}`);
+    return jobId;
+  }
+
+  /**
+   * Create a job with dependency chains using BullMQ FlowProducer.
+   * Parent-child only (single level), fail-fast policy.
+   *
+   * The dependent job is the parent in the flow. Each dependency gets a
+   * "dependency-gate" child in the `dep-gates` queue. A lightweight worker
+   * (see service.ts) processes gate children by polling the referenced
+   * dependency job until it completes or fails. If any dependency fails,
+   * the gate child throws (fails), and the parent stays unprocessed (fail-fast).
+   */
+  private async createJobWithDependencies(
+    queue: Queue,
+    jobData: AgentJob,
+    addOpts: Record<string, unknown>,
+    dependsOn: string[],
+  ): Promise<string> {
+    const flowProducer = this.getFlowProducer();
+
+    // Validate all dependency jobs exist before creating the flow
+    for (const depJobId of dependsOn) {
+      const depQueueName = await this.findQueueForJob(depJobId);
+      if (!depQueueName) {
+        throw new Error(`Dependency job ${depJobId} not found in any queue`);
+      }
+    }
+
+    // Create dependency-gate children — each monitors one dependency job
+    const children = dependsOn.map((depJobId) => ({
+      name: "dependency-gate",
+      queueName: "dep-gates",
+      data: {
+        dependencyJobId: depJobId,
+        parentTarget: jobData.target,
+      },
+    }));
+
+    // FlowProducer: parent (dependent job) waits for all children (gates)
+    const flow = await flowProducer.add({
+      name: "agent-run",
+      queueName: queue.name,
+      data: jobData,
+      opts: addOpts,
+      children,
+    });
+
+    const jobId = flow.job.id!;
+
+    // Update job data with actual BullMQ jobId if auto-generated
+    if (!addOpts.jobId) {
+      const job = await queue.getJob(jobId);
+      if (job) {
+        await job.updateData({ ...jobData, jobId });
+      }
+    }
+
+    // Write to Redis job index for O(1) lookups
+    await this.indexJob(jobId, queue.name);
+
     return jobId;
   }
 
@@ -306,6 +393,10 @@ export class JobTracker {
   }
 
   async close(): Promise<void> {
+    if (this.flowProducer) {
+      await this.flowProducer.close();
+      this.flowProducer = null;
+    }
     for (const queue of this.queues.values()) {
       await queue.close();
     }

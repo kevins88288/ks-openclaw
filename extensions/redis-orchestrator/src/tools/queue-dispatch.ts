@@ -31,6 +31,12 @@ const QueueDispatchSchema = Type.Object({
     Type.Number({ minimum: 0, description: "Timeout in seconds (0 = no timeout)" }),
   ),
   cleanup: optionalStringEnum(["delete", "keep"] as const),
+  dependsOn: Type.Optional(
+    Type.Array(Type.String(), {
+      description: "List of jobIds that must complete before this job starts (single level only, fail-fast)",
+      maxItems: 20,
+    }),
+  ),
 });
 
 export function createQueueDispatchTool(
@@ -73,6 +79,11 @@ export function createQueueDispatchTool(
         typeof params.runTimeoutSeconds === "number" && Number.isFinite(params.runTimeoutSeconds)
           ? Math.max(0, Math.floor(params.runTimeoutSeconds))
           : 0;
+
+      // Phase 3 Task 3.10: dependsOn — single-level dependency chains
+      const dependsOn = Array.isArray(params.dependsOn)
+        ? (params.dependsOn as string[]).filter((id) => typeof id === "string" && id.trim())
+        : undefined;
 
       const cfg = loadConfig();
 
@@ -181,6 +192,7 @@ export function createQueueDispatchTool(
               model,
               thinking,
               cleanup,
+              dependsOn,
             });
           },
           async () => {

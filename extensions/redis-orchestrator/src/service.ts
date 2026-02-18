@@ -15,6 +15,7 @@ import { createQueueOptions } from "./queue-config.js";
 import { asBullMQConnection, type RedisConnection } from "./redis-connection.js";
 import { createRedisConnection, closeRedisConnection } from "./redis-connection.js";
 import { createWorkers, closeWorkers } from "./worker.js";
+import { createDependencyGateWorker } from "./dependency-gate-worker.js";
 // COUPLING: not in plugin-sdk — tracks src/agents/agent-scope.js. File SDK exposure request if this breaks.
 import { listAgentIds } from "../../../src/agents/agent-scope.js";
 
@@ -22,6 +23,7 @@ export function createRedisOrchestratorService(state: PluginState): OpenClawPlug
   let queueEventsMap: Map<string, QueueEvents> = new Map();
   let dlqQueuesMap: Map<string, Queue> = new Map();
   let workersMap: Map<string, Worker> = new Map();
+  let depGateWorker: Worker | null = null;
 
   return {
     id: "redis-orchestrator",
@@ -98,6 +100,9 @@ export function createRedisOrchestratorService(state: PluginState): OpenClawPlug
           ctx.logger.info(`redis-orchestrator: started ${workersMap.size} workers`);
         }
 
+        // Phase 3 Task 3.10: Start dependency-gate worker for FlowProducer chains
+        depGateWorker = createDependencyGateWorker(connection, ctx.logger, state.jobTracker);
+
         ctx.logger.info("redis-orchestrator: service started");
       } catch (err) {
         ctx.logger.error(
@@ -109,6 +114,13 @@ export function createRedisOrchestratorService(state: PluginState): OpenClawPlug
     },
 
     async stop(ctx: OpenClawPluginServiceContext) {
+      // Phase 3 Task 3.10: Close dependency-gate worker
+      if (depGateWorker) {
+        await depGateWorker.close();
+        depGateWorker = null;
+        ctx.logger.info("redis-orchestrator: dependency-gate worker closed");
+      }
+
       // Phase 2: Close all workers first (they hold jobs)
       if (workersMap.size > 0) {
         await closeWorkers(workersMap, ctx.logger);

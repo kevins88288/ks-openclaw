@@ -57,6 +57,9 @@ export interface AgentJob {
   model?: string;
   thinking?: string;
   cleanup?: 'delete' | 'keep';
+
+  // Dependency chains (Phase 3 Task 3.10)
+  dependsOn?: string[];
 }
 
 export interface QueueStats {
