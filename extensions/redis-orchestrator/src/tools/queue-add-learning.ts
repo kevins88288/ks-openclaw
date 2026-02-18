@@ -6,12 +6,12 @@
  * with a configurable TTL (default 365 days).
  */
 
-import { Type } from "@sinclair/typebox";
 import crypto from "node:crypto";
+import { Type } from "@sinclair/typebox";
 import type { OpenClawPluginToolContext, AnyAgentTool } from "openclaw/plugin-sdk";
 import { jsonResult } from "openclaw/plugin-sdk";
-import { isSystemAgent } from "../auth-helpers.js";
 import type { PluginState } from "../../index.js";
+import { isSystemAgent } from "../auth-helpers.js";
 import type { LearningEntry } from "../types.js";
 
 const QueueAddLearningSchema = Type.Object({
@@ -44,10 +44,10 @@ export function createQueueAddLearningTool(
     name: "queue_add_learning",
     description:
       "Record a learning from a completed job. Stored persistently in Redis under the project learning index. System agents only.",
-    inputSchema: QueueAddLearningSchema,
+    parameters: QueueAddLearningSchema,
 
-    async execute(params: unknown) {
-      const { projectId, jobId, learning, tags, previousJobId } = params as {
+    execute: async (_toolCallId, args) => {
+      const { projectId, jobId, learning, tags, previousJobId } = args as {
         projectId: string;
         jobId: string;
         learning: string;
@@ -84,16 +84,18 @@ export function createQueueAddLearningTool(
       let jobData: { data?: { label?: string } } | null = null;
       try {
         const queue = state.jobTracker.getOrCreateQueue(queueName);
-        jobData = await queue.getJob(jobId) as { data?: { label?: string } } | null;
+        jobData = (await queue.getJob(jobId)) as { data?: { label?: string } } | null;
       } catch {
         // If we can't fetch job details, continue with undefined phase
         jobData = null;
       }
 
       // Retrieve pluginConfig for TTL
-      const pluginConfig = state.pluginConfig as {
-        learnings?: { ttlDays?: number };
-      } | undefined;
+      const pluginConfig = state.pluginConfig as
+        | {
+            learnings?: { ttlDays?: number };
+          }
+        | undefined;
 
       const id = crypto.randomUUID();
       const entry: LearningEntry = {

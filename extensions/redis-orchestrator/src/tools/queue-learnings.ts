@@ -14,12 +14,8 @@ import type { LearningEntry } from "../types.js";
 
 const QueueLearningsSchema = Type.Object({
   projectId: Type.Optional(Type.String({ description: "Filter by project" })),
-  jobId: Type.Optional(
-    Type.String({ description: "Filter to learnings from a specific job" }),
-  ),
-  tags: Type.Optional(
-    Type.Array(Type.String(), { description: "Filter by tags (OR match)" }),
-  ),
+  jobId: Type.Optional(Type.String({ description: "Filter to learnings from a specific job" })),
+  tags: Type.Optional(Type.Array(Type.String(), { description: "Filter by tags (OR match)" })),
   limit: Type.Optional(
     Type.Number({ minimum: 1, maximum: 100, description: "Max results (default 20)" }),
   ),
@@ -42,10 +38,15 @@ export function createQueueLearningsTool(
     name: "queue_learnings",
     description:
       "Query learning entries by project, job, and/or tags. Returns entries ordered by timestamp descending.",
-    inputSchema: QueueLearningsSchema,
+    parameters: QueueLearningsSchema,
 
-    async execute(params: unknown) {
-      const { projectId, jobId, tags, limit = 20 } = params as {
+    execute: async (_toolCallId, args) => {
+      const {
+        projectId,
+        jobId,
+        tags,
+        limit = 20,
+      } = args as {
         projectId?: string;
         jobId?: string;
         tags?: string[];
