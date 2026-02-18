@@ -58,11 +58,14 @@ export function createQueueAddLearningTool(
 
       // Explicit 1KB enforcement (defense-in-depth against SDK schema validation gaps)
       if (learning.length > 1024) {
-        return jsonResult({ status: "error", error: "Learning text exceeds 1KB limit (max 1024 chars)" });
+        return jsonResult({
+          status: "error",
+          error: "Learning text exceeds 1KB limit (max 1024 chars)",
+        });
       }
 
       // Auth: system agents only
-      if (!isSystemAgent(ctx.agentId)) {
+      if (!isSystemAgent(ctx.agentId ?? "")) {
         return jsonResult({
           status: "forbidden",
           error: "queue_add_learning requires system agent privileges",
@@ -110,7 +113,7 @@ export function createQueueAddLearningTool(
         previousJobId,
         projectId,
         phase: jobData?.data?.label,
-        agentId: ctx.agentId,
+        agentId: ctx.agentId ?? "unknown",
         learning,
         tags,
         timestamp: Date.now(),
