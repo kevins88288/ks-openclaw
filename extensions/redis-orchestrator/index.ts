@@ -39,6 +39,7 @@ export interface PluginState {
   dlqAlerter: DLQAlerter | null;
   pluginConfig: Record<string, unknown> | undefined;
   workersMap: Map<string, Worker> | null;
+  pluginApi: OpenClawPluginApi | null;
 }
 
 const state: PluginState = {
@@ -48,6 +49,7 @@ const state: PluginState = {
   dlqAlerter: null,
   pluginConfig: undefined,
   workersMap: null,
+  pluginApi: null,
 };
 
 const plugin: OpenClawPluginDefinition = {
@@ -61,8 +63,9 @@ const plugin: OpenClawPluginDefinition = {
   register(api: OpenClawPluginApi) {
     api.logger.info("redis-orchestrator: registering plugin");
 
-    // Capture pluginConfig from the platform (validated by configSchema.safeParse)
+    // Capture pluginConfig and api reference for deferred Bull Board mount
     state.pluginConfig = api.pluginConfig;
+    state.pluginApi = api;
 
     // Register the background service — it owns init/teardown of shared state
     api.registerService(createRedisOrchestratorService(state));

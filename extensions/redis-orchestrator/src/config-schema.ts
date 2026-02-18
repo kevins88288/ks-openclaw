@@ -51,6 +51,16 @@ export const RedisOrchestratorConfigType = Type.Object(
         { additionalProperties: false },
       ),
     ),
+    bullBoard: Type.Optional(
+      Type.Object(
+        {
+          authToken: Type.Optional(Type.String({
+            description: "Bearer token for Bull Board UI access. If unset, endpoint is disabled.",
+          })),
+        },
+        { additionalProperties: false },
+      ),
+    ),
   },
   { additionalProperties: false },
 );
@@ -139,6 +149,13 @@ const jsonSchema: Record<string, unknown> = {
       additionalProperties: false,
       properties: {
         alertChannel: { type: "string", default: "discord" },
+      },
+    },
+    bullBoard: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        authToken: { type: "string" },
       },
     },
   },

@@ -268,3 +268,45 @@ callGateway("sessions.patch", { key, spawnDepth, model, thinkingLevel })  // ~RT
 - [x] `queue_status` shows `waitingForDependencies: true` when applicable
 - [x] No `failurePolicy` parameter exposed — fail-fast only
 - [x] No nested/multi-level dependencies (single level only)
+
+---
+
+## Task 3.11 — Bull Board Monitoring Dashboard
+
+**Status:** ✅ Complete
+**Date:** 2026-02-17
+
+### What was built
+
+Mounted Bull Board (BullMQ monitoring UI) at `/queue` on the OpenClaw gateway HTTP server with read-only access and bearer token authentication.
+
+### Files changed
+
+| File | Change |
+|------|--------|
+| `extensions/redis-orchestrator/package.json` | Added `@bull-board/api` and `@bull-board/express` dependencies |
+| `extensions/redis-orchestrator/src/config-schema.ts` | Added `bullBoard.authToken` field to TypeBox schema and JSON schema |
+| `extensions/redis-orchestrator/src/bull-board.ts` | New file — `mountBullBoard()` function with auth, timing-safe token comparison, read-only adapters |
+| `extensions/redis-orchestrator/src/service.ts` | Calls `mountBullBoard()` during activation with all agent queue instances |
+| `extensions/redis-orchestrator/index.ts` | Added `pluginApi` to PluginState so service can register HTTP handlers |
+
+### Design decisions
+
+1. **`registerHttpHandler` over `registerHttpRoute`** — The gateway's route matching is exact-pathname only. Bull Board requires prefix matching for sub-routes (`/queue/api/*`, `/queue/static/*`). Using `registerHttpHandler` (which returns boolean for "handled?") allows proper prefix-based routing.
+
+2. **Auth in handler, not middleware** — Since we use `registerHttpHandler`, auth is checked before delegating to Express. No token configured → handler returns `false` (falls through to 404). Wrong/missing token → 401.
+
+3. **Express sub-app** — Bull Board's `ExpressAdapter.getRouter()` returns an Express Router. We mount it on a mini Express app that receives delegated requests after auth passes.
+
+4. **Dynamic queue support** — `mountBullBoard()` returns `{ addQueue }` for adding queues after startup (AC-6 partial — currently all agent queues are passed at mount time from `dlqQueuesMap`).
+
+### Acceptance criteria
+
+- [x] `/queue` with valid token → 200 with Bull Board HTML
+- [x] `/queue` with no authToken configured → 404 (handler returns false, gateway default)
+- [x] Wrong/missing token → 401
+- [x] `crypto.timingSafeEqual` used for comparison
+- [x] All adapters created with `{ readOnlyMode: true }`
+- [x] All agent queues appear in Bull Board (passed from `dlqQueuesMap` which has one Queue per agent)
+- [x] Config schema validates `bullBoard.authToken` (TypeBox + JSON schema)
+- [x] Static assets (`/queue/static/*`) load correctly (prefix-based handler + Express sub-app)

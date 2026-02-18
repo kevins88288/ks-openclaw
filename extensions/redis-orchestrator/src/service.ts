@@ -16,6 +16,7 @@ import { asBullMQConnection, type RedisConnection } from "./redis-connection.js"
 import { createRedisConnection, closeRedisConnection } from "./redis-connection.js";
 import { createWorkers, closeWorkers } from "./worker.js";
 import { createDependencyGateWorker } from "./dependency-gate-worker.js";
+import { mountBullBoard } from "./bull-board.js";
 // COUPLING: not in plugin-sdk — tracks src/agents/agent-scope.js. File SDK exposure request if this breaks.
 import { listAgentIds } from "../../../src/agents/agent-scope.js";
 
@@ -102,6 +103,12 @@ export function createRedisOrchestratorService(state: PluginState): OpenClawPlug
 
         // Phase 3 Task 3.10: Start dependency-gate worker for FlowProducer chains
         depGateWorker = createDependencyGateWorker(connection, ctx.logger, state.jobTracker);
+
+        // Phase 3 Task 3.11: Mount Bull Board dashboard
+        if (state.pluginApi) {
+          const allQueues = Array.from(dlqQueuesMap.values());
+          mountBullBoard(state.pluginApi, allQueues);
+        }
 
         ctx.logger.info("redis-orchestrator: service started");
       } catch (err) {
