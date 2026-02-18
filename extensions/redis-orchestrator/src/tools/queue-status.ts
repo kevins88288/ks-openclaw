@@ -147,6 +147,17 @@ export function createQueueStatusTool(
           result.waitingForDependencies = waitingForDependencies;
         }
 
+        // Phase 3.5 Batch 1: Include agent-level retry fields
+        if (jobData.retryCount !== undefined && jobData.retryCount > 0) {
+          result.retryCount = jobData.retryCount;
+        }
+        if (jobData.originalJobId) {
+          result.originalJobId = jobData.originalJobId;
+        }
+        if (jobData.retriedByJobId) {
+          result.retriedByJobId = jobData.retriedByJobId;
+        }
+
         // Strip sensitive fields for non-system agents
         return jsonResult(stripSensitiveFields(result, callerAgentId));
       } catch (err) {

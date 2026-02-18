@@ -10,6 +10,8 @@ export type AgentJobStatus =
   | 'announcing' 
   | 'completed' 
   | 'failed' 
+  | 'failed_permanent'
+  | 'retrying'
   | 'stalled';
 
 export interface AgentJob {
@@ -57,6 +59,13 @@ export interface AgentJob {
   model?: string;
   thinking?: string;
   cleanup?: 'delete' | 'keep';
+  systemPromptAddition?: string;
+  depth?: number;
+
+  // Agent-level retry tracking (Phase 3.5 Batch 1)
+  retryCount?: number;         // how many agent-level re-dispatches have occurred (default 0)
+  originalJobId?: string;      // links back to the first dispatch in a retry chain
+  retriedByJobId?: string;     // links forward to the retry job (if re-dispatched)
 
   // Dependency chains (Phase 3 Task 3.10)
   dependsOn?: string[];

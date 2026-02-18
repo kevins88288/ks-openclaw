@@ -178,6 +178,8 @@ export class JobTracker {
     thinking?: string;
     cleanup?: 'delete' | 'keep';
     dependsOn?: string[];
+    systemPromptAddition?: string;
+    depth?: number;
   }): Promise<string> {
     const queue = this.getQueueForAgent(params.target);
 
@@ -202,6 +204,8 @@ export class JobTracker {
       thinking: params.thinking,
       cleanup: params.cleanup,
       dependsOn: params.dependsOn,
+      systemPromptAddition: params.systemPromptAddition,
+      depth: params.depth,
     };
 
     const addOpts: Record<string, unknown> = {};

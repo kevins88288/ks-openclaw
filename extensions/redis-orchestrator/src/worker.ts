@@ -99,6 +99,8 @@ async function processJob(
     dispatcherDepth,
     dispatcherOrigin: rawDispatcherOrigin,
     project,
+    systemPromptAddition,
+    depth: explicitDepth,
   } = job.data;
 
   const cleanup = rawCleanup === "delete" ? "delete" : "keep";
@@ -124,10 +126,13 @@ async function processJob(
   const requesterOrigin = normalizeDeliveryContext(rawDispatcherOrigin);
 
   // 1. Validate depth
+  // Phase 3.5: explicit depth from queue_dispatch takes precedence
   const callerDepth =
-    typeof dispatcherDepth === "number"
-      ? dispatcherDepth
-      : getSubagentDepthFromSessionStore(requesterInternalKey, { cfg });
+    typeof explicitDepth === "number"
+      ? explicitDepth
+      : typeof dispatcherDepth === "number"
+        ? dispatcherDepth
+        : getSubagentDepthFromSessionStore(requesterInternalKey, { cfg });
   const maxSpawnDepth = cfg.agents?.defaults?.subagents?.maxSpawnDepth ?? 1;
 
   if (callerDepth >= maxSpawnDepth) {
@@ -240,7 +245,7 @@ async function processJob(
   }
 
   // 10. Build system prompt
-  const childSystemPrompt = buildSubagentSystemPrompt({
+  let childSystemPrompt = buildSubagentSystemPrompt({
     requesterSessionKey: requesterInternalKey,
     requesterOrigin,
     childSessionKey,
@@ -249,6 +254,11 @@ async function processJob(
     childDepth,
     maxSpawnDepth,
   });
+
+  // Phase 3.5: Append systemPromptAddition if provided (system agents only — validated at dispatch)
+  if (systemPromptAddition) {
+    childSystemPrompt = childSystemPrompt + "\n\n" + systemPromptAddition;
+  }
 
   // 11. Start child agent via callGateway
   const childIdem = crypto.randomUUID();

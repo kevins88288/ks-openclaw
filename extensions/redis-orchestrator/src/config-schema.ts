@@ -66,6 +66,27 @@ export const RedisOrchestratorConfigType = Type.Object(
         { additionalProperties: false },
       ),
     ),
+    retry: Type.Optional(
+      Type.Object(
+        {
+          agentFailureAttempts: Type.Optional(
+            Type.Number({
+              default: 3,
+              minimum: 1,
+              description: "Total attempts including initial dispatch (default: 3)",
+            }),
+          ),
+          agentFailureBaseDelayMs: Type.Optional(
+            Type.Number({
+              default: 300_000,
+              minimum: 1000,
+              description: "Base delay in ms for exponential backoff on agent failure (default: 300000 = 5min)",
+            }),
+          ),
+        },
+        { additionalProperties: false },
+      ),
+    ),
   },
   { additionalProperties: false },
 );
@@ -161,6 +182,14 @@ const jsonSchema: Record<string, unknown> = {
       additionalProperties: false,
       properties: {
         authToken: { type: "string" },
+      },
+    },
+    retry: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        agentFailureAttempts: { type: "number", default: 3 },
+        agentFailureBaseDelayMs: { type: "number", default: 300000 },
       },
     },
   },
