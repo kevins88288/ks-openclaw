@@ -8,27 +8,28 @@
  * failure, alerts on DLQ.
  */
 
-import type { OpenClawPluginApi, OpenClawPluginDefinition } from "openclaw/plugin-sdk";
 import type { Worker } from "bullmq";
+import type { OpenClawPluginApi, OpenClawPluginDefinition } from "openclaw/plugin-sdk";
+import { registerApprovalCommands } from "./src/approval-commands.js";
 import type { QueueCircuitBreaker } from "./src/circuit-breaker.js";
-import type { DLQAlerter } from "./src/dlq-alerting.js";
-import type { JobTracker } from "./src/job-tracker.js";
-import type { RedisConnection } from "./src/redis-connection.js";
-import { redisOrchestratorConfigSchema } from "./src/config-schema.js";
 import { registerQueueCommands } from "./src/cli-commands.js";
+import { redisOrchestratorConfigSchema } from "./src/config-schema.js";
+import type { DLQAlerter } from "./src/dlq-alerting.js";
 import {
   createAfterToolCallHook,
   createAgentEndHook,
   createSessionsSendRetryHook,
 } from "./src/hooks.js";
+import type { JobTracker } from "./src/job-tracker.js";
+import { registerReactionHandler } from "./src/reaction-handler.js";
+import type { RedisConnection } from "./src/redis-connection.js";
 import { createRedisOrchestratorService } from "./src/service.js";
-import { createQueueDispatchTool } from "./src/tools/queue-dispatch.js";
-import { createQueueStatusTool } from "./src/tools/queue-status.js";
-import { createQueueListTool } from "./src/tools/queue-list.js";
 import { createQueueActivityTool } from "./src/tools/queue-activity.js";
 import { createQueueAddLearningTool } from "./src/tools/queue-add-learning.js";
+import { createQueueDispatchTool } from "./src/tools/queue-dispatch.js";
 import { createQueueLearningsTool } from "./src/tools/queue-learnings.js";
-import { registerApprovalCommands } from "./src/approval-commands.js";
+import { createQueueListTool } from "./src/tools/queue-list.js";
+import { createQueueStatusTool } from "./src/tools/queue-status.js";
 
 /**
  * Shared mutable state container.
@@ -112,6 +113,9 @@ const plugin: OpenClawPluginDefinition = {
 
     // Phase 3.6 Batch 2: Register approval workflow commands
     registerApprovalCommands(api, state);
+
+    // Phase 3.7 Piece 3: Register reaction-based approve/reject handler
+    registerReactionHandler(api, state);
 
     // Register CLI commands — connection created lazily inside each command
     api.registerCli(

@@ -17,22 +17,24 @@ import { randomUUID } from "node:crypto";
 import { Type } from "@sinclair/typebox";
 import type { OpenClawPluginToolContext, AnyAgentTool } from "openclaw/plugin-sdk";
 import { jsonResult, readStringParam, optionalStringEnum } from "openclaw/plugin-sdk";
-import { isSystemAgent, isOrchestrator } from "../auth-helpers.js";
-import type { ApprovalRecord } from "../types.js";
-import type { RedisOrchestratorConfig } from "../config-schema.js";
-// COUPLING: not in plugin-sdk — tracks src/config/config.js. File SDK exposure request if this breaks.
-import { loadConfig } from "../../../../src/config/config.js";
-// COUPLING: not in plugin-sdk — tracks src/routing/session-key.js. File SDK exposure request if this breaks.
-import { normalizeAgentId, parseAgentSessionKey } from "../../../../src/routing/session-key.js";
 // COUPLING: not in plugin-sdk — tracks src/agents/agent-scope.js. File SDK exposure request if this breaks.
 import { resolveAgentConfig } from "../../../../src/agents/agent-scope.js";
 // COUPLING: not in plugin-sdk — tracks src/agents/subagent-depth.js. File SDK exposure request if this breaks.
 import { getSubagentDepthFromSessionStore } from "../../../../src/agents/subagent-depth.js";
-// COUPLING: not in plugin-sdk — tracks src/utils/delivery-context.js. File SDK exposure request if this breaks.
-import { normalizeDeliveryContext } from "../../../../src/utils/delivery-context.js";
+// COUPLING: not in plugin-sdk — tracks src/config/config.js. File SDK exposure request if this breaks.
+import { loadConfig } from "../../../../src/config/config.js";
+// COUPLING: not in plugin-sdk — tracks src/discord/send.reactions.js. File SDK exposure request if this breaks.
+import { reactMessageDiscord } from "../../../../src/discord/send.reactions.js";
 // COUPLING: not in plugin-sdk — tracks src/gateway/call.js. File SDK exposure request if this breaks.
 import { callGateway } from "../../../../src/gateway/call.js";
+// COUPLING: not in plugin-sdk — tracks src/routing/session-key.js. File SDK exposure request if this breaks.
+import { normalizeAgentId, parseAgentSessionKey } from "../../../../src/routing/session-key.js";
+// COUPLING: not in plugin-sdk — tracks src/utils/delivery-context.js. File SDK exposure request if this breaks.
+import { normalizeDeliveryContext } from "../../../../src/utils/delivery-context.js";
 import type { PluginState } from "../../index.js";
+import { isSystemAgent, isOrchestrator } from "../auth-helpers.js";
+import type { RedisOrchestratorConfig } from "../config-schema.js";
+import type { ApprovalRecord } from "../types.js";
 
 const QueueDispatchSchema = Type.Object({
   target: Type.String({ description: "Agent ID to dispatch work to" }),
@@ -47,18 +49,24 @@ const QueueDispatchSchema = Type.Object({
   cleanup: optionalStringEnum(["delete", "keep"] as const),
   dependsOn: Type.Optional(
     Type.Array(Type.String(), {
-      description: "List of jobIds that must complete before this job starts (single level only, fail-fast)",
+      description:
+        "List of jobIds that must complete before this job starts (single level only, fail-fast)",
       maxItems: 20,
     }),
   ),
   systemPromptAddition: Type.Optional(
-    Type.String({ maxLength: 2000, description: "Additional system prompt text (system agents only)" }),
+    Type.String({
+      maxLength: 2000,
+      description: "Additional system prompt text (system agents only)",
+    }),
   ),
   depth: Type.Optional(
     Type.Number({ minimum: 0, description: "Explicit depth for the spawned agent" }),
   ),
   storeResult: Type.Optional(
-    Type.Boolean({ description: "If true, capture agent's final message in job record after completion" }),
+    Type.Boolean({
+      description: "If true, capture agent's final message in job record after completion",
+    }),
   ),
   // Phase 3.6: Approval routing
   requiresApproval: Type.Optional(
@@ -70,7 +78,8 @@ const QueueDispatchSchema = Type.Object({
   reason: Type.Optional(
     Type.String({
       maxLength: 200,
-      description: "Human-readable reason why approval is required (included in Discord notification)",
+      description:
+        "Human-readable reason why approval is required (included in Discord notification)",
     }),
   ),
 });
@@ -259,21 +268,33 @@ export function createQueueDispatchTool(
           `queue_dispatch: orchestrator not running — falling back to sessions_spawn for target=${normalizeAgentId(readStringParam(params, "target", { required: true }))}`,
         );
 
-        const fallbackTarget = normalizeAgentId(readStringParam(params, "target", { required: true }));
+        const fallbackTarget = normalizeAgentId(
+          readStringParam(params, "target", { required: true }),
+        );
         const fallbackTask = readStringParam(params, "task", { required: true });
 
         try {
-          return jsonResult(await directSpawnFallback({
-            target: fallbackTarget,
-            task: fallbackTask,
-            label: readStringParam(params, "label"),
-            model: readStringParam(params, "model"),
-            thinking: readStringParam(params, "thinking"),
-            cleanup: params.cleanup === "keep" || params.cleanup === "delete" ? params.cleanup : "keep",
-            runTimeoutSeconds: typeof params.runTimeoutSeconds === "number" && Number.isFinite(params.runTimeoutSeconds)
-              ? Math.max(0, Math.floor(params.runTimeoutSeconds))
-              : 0,
-          }, "orchestrator_unavailable"));
+          return jsonResult(
+            await directSpawnFallback(
+              {
+                target: fallbackTarget,
+                task: fallbackTask,
+                label: readStringParam(params, "label"),
+                model: readStringParam(params, "model"),
+                thinking: readStringParam(params, "thinking"),
+                cleanup:
+                  params.cleanup === "keep" || params.cleanup === "delete"
+                    ? params.cleanup
+                    : "keep",
+                runTimeoutSeconds:
+                  typeof params.runTimeoutSeconds === "number" &&
+                  Number.isFinite(params.runTimeoutSeconds)
+                    ? Math.max(0, Math.floor(params.runTimeoutSeconds))
+                    : 0,
+              },
+              "orchestrator_unavailable",
+            ),
+          );
         } catch (fallbackErr) {
           return jsonResult({
             status: "error",
@@ -285,12 +306,12 @@ export function createQueueDispatchTool(
       // Parse parameters
       const target = readStringParam(params, "target", { required: true });
       const task = readStringParam(params, "task", { required: true });
-      
+
       // Validate task length
       if (task.length > 50000) {
         return jsonResult({ status: "error", error: "Task exceeds 50KB limit" });
       }
-      
+
       const label = readStringParam(params, "label");
       const project = readStringParam(params, "project");
       const model = readStringParam(params, "model");
@@ -384,11 +405,9 @@ export function createQueueDispatchTool(
           typeof approvalConfig?.discordChannelId === "string"
             ? approvalConfig.discordChannelId
             : undefined;
-        const ttlDays =
-          typeof approvalConfig?.ttlDays === "number" ? approvalConfig.ttlDays : 7;
+        const ttlDays = typeof approvalConfig?.ttlDays === "number" ? approvalConfig.ttlDays : 7;
         const ttlSeconds = ttlDays * 24 * 60 * 60;
-        const reason =
-          typeof params.reason === "string" ? (params.reason as string) : undefined;
+        const reason = typeof params.reason === "string" ? (params.reason as string) : undefined;
 
         const approvalId = randomUUID();
         const createdAt = Date.now();
@@ -424,9 +443,20 @@ export function createQueueDispatchTool(
         // Send Discord notification BEFORE creating the Redis record.
         // If Discord send fails → return error, do NOT create the record.
         try {
-          const messageId = await sendApprovalNotification(discordChannelId, approvalRecord, ttlDays);
+          const messageId = await sendApprovalNotification(
+            discordChannelId,
+            approvalRecord,
+            ttlDays,
+          );
           if (messageId) {
             approvalRecord.discordMessageId = messageId;
+
+            // Piece 2: Pre-add ✅ and ❌ reactions to the notification message.
+            // Fire-and-forget — reaction failure must NOT block approval record creation.
+            Promise.allSettled([
+              reactMessageDiscord(discordChannelId, messageId, "✅"),
+              reactMessageDiscord(discordChannelId, messageId, "❌"),
+            ]).catch(() => {});
           }
         } catch (discordErr) {
           warnLog(
@@ -453,6 +483,15 @@ export function createQueueDispatchTool(
           // Index by project if provided
           if (project) {
             pipeline.zadd(`orch:approvals:project:${project}`, createdAt, approvalId);
+          }
+          // Piece 3: Reverse index discordMessageId → approvalId for O(1) reaction lookup
+          if (approvalRecord.discordMessageId) {
+            pipeline.set(
+              `orch:approvals:msg:${approvalRecord.discordMessageId}`,
+              approvalId,
+              "EX",
+              ttlSeconds,
+            );
           }
           await pipeline.exec();
         } catch (redisErr) {
@@ -483,7 +522,7 @@ export function createQueueDispatchTool(
       // Check per-agent rate limit (Redis-based counter with 60s TTL, atomic via Lua)
       if (dispatchesPerMinute > 0) {
         const rateLimitKey = `bull:ratelimit:dispatch:${callerAgentId}`;
-        const current = await state.connection.eval(RATE_LIMIT_LUA, 1, rateLimitKey) as number;
+        const current = (await state.connection.eval(RATE_LIMIT_LUA, 1, rateLimitKey)) as number;
         if (current > dispatchesPerMinute) {
           return jsonResult({
             status: "rate_limited",
@@ -546,15 +585,18 @@ export function createQueueDispatchTool(
               `queue_dispatch: circuit breaker open — falling back to sessions_spawn for target=${targetAgentId}`,
             );
 
-            const result = await directSpawnFallback({
-              target: targetAgentId,
-              task,
-              label,
-              model,
-              thinking,
-              cleanup,
-              runTimeoutSeconds,
-            }, "circuit_open");
+            const result = await directSpawnFallback(
+              {
+                target: targetAgentId,
+                task,
+                label,
+                model,
+                thinking,
+                cleanup,
+                runTimeoutSeconds,
+              },
+              "circuit_open",
+            );
 
             // Return a sentinel value that signals fallback mode
             return `__fallback__:${result.jobId}`;

@@ -11,6 +11,7 @@ import { danger } from "../../globals.js";
 import { formatDurationSeconds } from "../../infra/format-time/format-duration.ts";
 import { enqueueSystemEvent } from "../../infra/system-events.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
+import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import { resolveAgentRoute } from "../../routing/resolve-route.js";
 import {
   normalizeDiscordSlug,
@@ -201,6 +202,37 @@ async function handleDiscordReactionEvent(params: {
       : null;
     if (isGuildMessage && guildEntries && Object.keys(guildEntries).length > 0 && !guildInfo) {
       return;
+    }
+
+    // Fire reaction_add plugin hook AFTER guild allowlist check, BEFORE channel-level filtering.
+    // This ensures plugins only see reactions from guilds the bot is configured to operate in,
+    // while still seeing reactions from any channel within those guilds (even channels without
+    // explicit channel-level config, such as the approval channel).
+    if (action === "added") {
+      const hookRunner = getGlobalHookRunner();
+      if (hookRunner?.hasHooks("reaction_add")) {
+        void hookRunner
+          .runReactionAdd(
+            {
+              emoji: formatDiscordReactionEmoji(data.emoji),
+              userId: user.id,
+              userName: user.username,
+              channelId: data.channel_id,
+              messageId: data.message_id,
+              guildId: data.guild_id ?? undefined,
+              isBot: Boolean(user.bot),
+              reaction_type: "add",
+            },
+            {
+              channelType: "discord",
+              accountId: params.accountId,
+              guildId: data.guild_id ?? undefined,
+            },
+          )
+          .catch((err) => {
+            params.logger.error(danger(`reaction_add hook failed: ${String(err)}`));
+          });
+      }
     }
 
     const channel = await client.fetchChannel(data.channel_id);

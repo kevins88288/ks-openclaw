@@ -76,6 +76,8 @@ export type {
   PluginHookGatewayStartEvent,
   PluginHookGatewayContext,
   PluginHookGatewayStopEvent,
+  PluginHookReactionAddEvent,
+  PluginHookReactionContext,
   ProviderAuthContext,
   ProviderAuthResult,
 } from "../plugins/types.js";
