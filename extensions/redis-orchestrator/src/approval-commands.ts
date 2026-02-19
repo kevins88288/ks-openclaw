@@ -23,7 +23,10 @@ import { formatRelativeTime } from "./utils.js";
  * Register /approve, /reject, and /pending commands.
  * Called once inside register(api) — commands re-register on every gateway restart.
  */
-export function registerApprovalCommands(api: OpenClawPluginApi, state: PluginState): void {
+export function registerApprovalCommands(
+  api: OpenClawPluginApi,
+  state: PluginState,
+): void {
   // ─────────────────────────────────────────────────────────────────────────
   // /approve <jobId>
   // ─────────────────────────────────────────────────────────────────────────
@@ -37,7 +40,8 @@ export function registerApprovalCommands(api: OpenClawPluginApi, state: PluginSt
       if (!input) return { text: "Usage: `/approve <jobId>`" };
 
       // Validate sender against authorizedApprovers (fail-secure: empty list blocks everyone)
-      const approvers: string[] = (state.pluginConfig as any)?.approval?.authorizedApprovers ?? [];
+      const approvers: string[] =
+        (state.pluginConfig as any)?.approval?.authorizedApprovers ?? [];
       if (approvers.length === 0) {
         return { text: "⛔ No authorized approvers configured." };
       }
@@ -47,6 +51,8 @@ export function registerApprovalCommands(api: OpenClawPluginApi, state: PluginSt
         );
         return { text: "⛔ You are not authorized to approve requests." };
       }
+      // Capture in a local const so narrowing survives across await boundaries
+      const approverId = ctx.senderId;
 
       // Check connection
       if (!state.connection) return { text: "⚠️ Redis not connected." };
@@ -62,7 +68,7 @@ export function registerApprovalCommands(api: OpenClawPluginApi, state: PluginSt
         return { text: `❌ No approval record found: \`${input}\`` };
       }
 
-      const result = await executeApprove(resolved.id, ctx.senderId, state, api);
+      const result = await executeApprove(resolved.id, approverId, state, api);
       return { text: result.message };
     },
   });
@@ -80,7 +86,8 @@ export function registerApprovalCommands(api: OpenClawPluginApi, state: PluginSt
       if (!input) return { text: "Usage: `/reject <jobId>`" };
 
       // Validate sender against authorizedApprovers (fail-secure: empty list blocks everyone)
-      const approvers: string[] = (state.pluginConfig as any)?.approval?.authorizedApprovers ?? [];
+      const approvers: string[] =
+        (state.pluginConfig as any)?.approval?.authorizedApprovers ?? [];
       if (approvers.length === 0) {
         return { text: "⛔ No authorized approvers configured." };
       }
@@ -90,6 +97,8 @@ export function registerApprovalCommands(api: OpenClawPluginApi, state: PluginSt
         );
         return { text: "⛔ You are not authorized to approve requests." };
       }
+      // Capture in a local const so narrowing survives across await boundaries
+      const rejecterId = ctx.senderId;
 
       // Check connection
       if (!state.connection) return { text: "⚠️ Redis not connected." };
@@ -105,7 +114,7 @@ export function registerApprovalCommands(api: OpenClawPluginApi, state: PluginSt
         return { text: `❌ No approval record found: \`${input}\`` };
       }
 
-      const result = await executeReject(resolved.id, ctx.senderId ?? "unknown", state, api);
+      const result = await executeReject(resolved.id, rejecterId, state, api);
       return { text: result.message };
     },
   });
@@ -122,7 +131,8 @@ export function registerApprovalCommands(api: OpenClawPluginApi, state: PluginSt
       if (!state.connection) return { text: "⚠️ Redis not connected." };
 
       // Gate /pending by authorizedApprovers
-      const approvers: string[] = (state.pluginConfig as any)?.approval?.authorizedApprovers ?? [];
+      const approvers: string[] =
+        (state.pluginConfig as any)?.approval?.authorizedApprovers ?? [];
       if (approvers.length === 0 || !ctx.senderId || !approvers.includes(ctx.senderId)) {
         return { text: "⛔ You are not authorized to view pending approvals." };
       }
@@ -154,7 +164,8 @@ export function registerApprovalCommands(api: OpenClawPluginApi, state: PluginSt
         const ageStr = formatRelativeTime(record.createdAt);
         const shortId = id.substring(0, 8);
         const taskPreview =
-          record.task.substring(0, 60).replace(/\n/g, " ") + (record.task.length > 60 ? "…" : "");
+          record.task.substring(0, 60).replace(/\n/g, " ") +
+          (record.task.length > 60 ? "…" : "");
         // Show short ID prominently for easy copy, plus full UUID
         lines.push(
           `${count}. \`${shortId}\` (\`${id}\`) — ${record.callerAgentId} → ${record.target} | "${taskPreview}" | ${ageStr}`,

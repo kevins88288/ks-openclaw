@@ -14,11 +14,14 @@
  *   - All operations use the same atomic CAS Lua scripts as the slash command path
  */
 
+import { Routes } from "discord-api-types/v10";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 // COUPLING: not in plugin-sdk — tracks src/discord/client.js. File SDK exposure request if this breaks.
 import { resolveDiscordRest } from "../../../src/discord/client.js";
 // COUPLING: not in plugin-sdk — tracks src/discord/send.reactions.js. File SDK exposure request if this breaks.
 import { removeReactionDiscord } from "../../../src/discord/send.reactions.js";
+// COUPLING: not in plugin-sdk — tracks src/gateway/call.js. File SDK exposure request if this breaks.
+import { callGateway } from "../../../src/gateway/call.js";
 import type { PluginState } from "../index.js";
 import { executeApprove, executeReject } from "./approval-logic.js";
 
@@ -33,7 +36,7 @@ const EMOJI_REJECT = "❌"; // U+274C
 
 // ---------------------------------------------------------------------------
 // Normalize emoji for Discord REST API URL encoding
-// Mirrors platform normalizeReactionEmoji() logic.
+// Mirrors platform normalizeReactionEmoji() logic from send.shared.ts.
 // ---------------------------------------------------------------------------
 function normalizeEmojiForApi(emoji: string): string {
   const trimmed = emoji.trim();
@@ -46,8 +49,8 @@ function normalizeEmojiForApi(emoji: string): string {
 
 // ---------------------------------------------------------------------------
 // Remove a specific user's reaction from a message.
-// Uses DELETE /channels/{channel_id}/messages/{message_id}/reactions/{emoji}/{user_id}
-// Requires MANAGE_MESSAGES permission.
+// Uses Routes.channelMessageUserReaction from discord-api-types/v10.
+// Requires MANAGE_MESSAGES permission in the channel.
 // This is fire-and-forget — caller should not await or catch.
 // ---------------------------------------------------------------------------
 async function removeUserReaction(
@@ -58,23 +61,42 @@ async function removeUserReaction(
 ): Promise<void> {
   const rest = resolveDiscordRest({});
   const encoded = normalizeEmojiForApi(emoji);
-  await rest.delete(`/channels/${channelId}/messages/${messageId}/reactions/${encoded}/${userId}`);
+  await rest.delete(Routes.channelMessageUserReaction(channelId, messageId, encoded, userId));
+}
+
+// ---------------------------------------------------------------------------
+// Post a message to a Discord channel via the gateway (fire-and-forget)
+// ---------------------------------------------------------------------------
+function postMessage(channelId: string, text: string, api: OpenClawPluginApi): void {
+  callGateway({
+    method: "send",
+    params: {
+      to: channelId,
+      channel: "discord",
+      message: text,
+    },
+    timeoutMs: 10_000,
+  }).catch((err: unknown) => {
+    api.logger.warn(
+      `reaction-handler: failed to send message to ${channelId}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  });
 }
 
 // ---------------------------------------------------------------------------
 // Find an approval record by the Discord message ID it was notified on.
-// Scans orch:approvals:pending sorted set (N is typically < 10).
-// Falls back to the msg-index key if present: orch:approvals:msg:{messageId}
+// First checks the fast O(1) index orch:approvals:msg:{messageId} (written by
+// queue-dispatch.ts). Falls back to a linear scan of orch:approvals:pending.
 // ---------------------------------------------------------------------------
 async function findApprovalIdByMessageId(
   connection: NonNullable<PluginState["connection"]>,
   messageId: string,
 ): Promise<string | null> {
-  // Try fast index first (written by queue-dispatch.ts when it creates the record)
+  // Fast index lookup (set by queue-dispatch.ts when creating the record)
   const indexed = await connection.get(`orch:approvals:msg:${messageId}`);
   if (indexed) return indexed;
 
-  // Fallback: linear scan of pending sorted set
+  // Fallback: linear scan of pending sorted set (N is typically < 10)
   const ids = await connection.zrange("orch:approvals:pending", 0, -1);
   for (const id of ids) {
     const raw = await connection.get(`orch:approval:${id}`);
@@ -90,7 +112,7 @@ async function findApprovalIdByMessageId(
 }
 
 // ---------------------------------------------------------------------------
-// registerReactionHandler — call from index.ts register()
+// registerReactionHandler — called from index.ts register()
 // ---------------------------------------------------------------------------
 
 export function registerReactionHandler(api: OpenClawPluginApi, state: PluginState): void {
@@ -98,7 +120,7 @@ export function registerReactionHandler(api: OpenClawPluginApi, state: PluginSta
     // Only handle Discord reactions
     if (ctx.channelType !== "discord") return;
 
-    // Ignore bot reactions (our own ✅/❌ additions trigger this — must not infinite-loop)
+    // Ignore bot reactions (prevents infinite loop when bot adds its own ✅/❌)
     if (event.isBot) return;
 
     // Redis must be connected
@@ -114,16 +136,17 @@ export function registerReactionHandler(api: OpenClawPluginApi, state: PluginSta
     if (event.emoji !== EMOJI_APPROVE && event.emoji !== EMOJI_REJECT) return;
 
     // Auth check — fail-secure: empty list blocks everyone
-    const approvers: string[] = (state.pluginConfig as any)?.approval?.authorizedApprovers ?? [];
+    const approvers: string[] =
+      (state.pluginConfig as any)?.approval?.authorizedApprovers ?? [];
     if (approvers.length === 0 || !event.userId || !approvers.includes(event.userId)) {
-      // Remove unauthorized reaction fire-and-forget (requires MANAGE_MESSAGES)
+      // Silently remove unauthorized reaction (requires MANAGE_MESSAGES)
       if (event.userId) {
         removeUserReaction(event.channelId, event.messageId, event.emoji, event.userId).catch(
           () => {},
         );
       }
       api.logger.warn(
-        `reaction-handler: unauthorized reaction ${event.emoji} by ${event.userId ?? "unknown"} on message ${event.messageId}`,
+        `reaction-handler: unauthorized ${event.emoji} by ${event.userId ?? "unknown"} on message ${event.messageId}`,
       );
       return;
     }
@@ -148,56 +171,35 @@ export function registerReactionHandler(api: OpenClawPluginApi, state: PluginSta
 
       if (result.spawnFailed) {
         // Spawn failure UX: remove Kevin's ✅ so he can re-react to retry
+        // (if left in place, Discord won't fire a new reaction_add event for same user+emoji)
         removeUserReaction(event.channelId, event.messageId, EMOJI_APPROVE, event.userId).catch(
           () => {},
         );
-        // Post failure message in #approval
-        callGatewayMessage(
+        // Post failure message in #approval channel
+        postMessage(
           discordChannelId,
           `⚠️ Approved but spawn failed for \`${approvalId}\`. Re-react ✅ to retry or use \`/approve ${approvalId}\``,
           api,
         );
-        // Leave bot's ✅/❌ reactions in place
+        // Leave bot's ✅/❌ reactions in place so Kevin can retry
       } else if (result.success) {
-        // Remove bot's ❌ reaction (visual indicator: approved, no longer rejectable)
+        // Remove bot's ❌ reaction (visual: approved, can no longer be rejected)
         removeReactionDiscord(event.channelId, event.messageId, EMOJI_REJECT).catch(() => {});
         // Post confirmation
-        callGatewayMessage(discordChannelId, `✅ Approved \`${approvalId}\` — spawned`, api);
+        postMessage(discordChannelId, `✅ Approved \`${approvalId}\` — spawned`, api);
       }
-      // If not success and not spawnFailed → already approved/rejected/expired → do nothing
+      // If neither success nor spawnFailed → already approved/rejected/expired → idempotent, do nothing
     } else {
       // EMOJI_REJECT
       const result = await executeReject(approvalId, event.userId, state, api);
 
       if (result.success) {
-        // Remove bot's ✅ reaction (visual indicator: rejected)
+        // Remove bot's ✅ reaction (visual: rejected)
         removeReactionDiscord(event.channelId, event.messageId, EMOJI_APPROVE).catch(() => {});
         // Post confirmation
-        callGatewayMessage(discordChannelId, `❌ Rejected \`${approvalId}\``, api);
+        postMessage(discordChannelId, `❌ Rejected \`${approvalId}\``, api);
       }
-      // If not success → already approved/rejected/expired → do nothing
+      // If not success → already approved/rejected/expired → idempotent, do nothing
     }
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Helper: post a message to a Discord channel via the gateway
-// ---------------------------------------------------------------------------
-// COUPLING: not in plugin-sdk — tracks src/gateway/call.js. File SDK exposure request if this breaks.
-import { callGateway } from "../../../src/gateway/call.js";
-
-function callGatewayMessage(channelId: string, text: string, api: OpenClawPluginApi): void {
-  callGateway({
-    method: "send",
-    params: {
-      to: channelId,
-      channel: "discord",
-      message: text,
-    },
-    timeoutMs: 10_000,
-  }).catch((err: unknown) => {
-    api.logger.warn(
-      `reaction-handler: failed to send message to ${channelId}: ${err instanceof Error ? err.message : String(err)}`,
-    );
   });
 }

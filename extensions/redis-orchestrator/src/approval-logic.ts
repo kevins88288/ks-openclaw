@@ -58,7 +58,7 @@ return 'ok'
  * This prevents a TOCTOU race where ✅ and ❌ arrive near-simultaneously.
  *
  * ARGV[1] = rejecterId (string)
- * ARGV[2] = rejectedAt timestamp (ISO string)
+ * ARGV[2] = rejectedAt timestamp (milliseconds, numeric string — use tonumber to store as JSON number)
  */
 export const CAS_REJECT_LUA = `
 local raw = redis.call('GET', KEYS[1])
@@ -70,7 +70,7 @@ if record.status ~= 'pending' then
 end
 record.status = 'rejected'
 record.rejectedBy = ARGV[1]
-record.rejectedAt = ARGV[2]
+record.rejectedAt = tonumber(ARGV[2])
 redis.call('SET', KEYS[1], cjson.encode(record), 'KEEPTTL')
 return 'ok'
 `;
@@ -327,7 +327,7 @@ export async function executeReject(
     1,
     `orch:approval:${id}`,
     rejecterId,
-    new Date().toISOString(),
+    String(Date.now()),
   )) as string | null;
 
   if (casResult === null) {
