@@ -158,6 +158,13 @@ function sanitizeTaskForDiscord(task: string, maxLength = 500): string {
   result = result.replace(/\u0000/g, "");
   result = result.replace(/[\u202e\u200f\u200e]/g, "");
 
+  // FIX-13: Sanitize channel mentions (prevents information disclosure via channel links)
+  result = result.replace(/<#\d+>/g, "[channel]");
+
+  // FIX-3: Escape triple backticks to prevent code block injection
+  // (the notification wraps sanitizedTask in triple backtick fences)
+  result = result.replace(/```/g, "` ` `");
+
   // Truncate AFTER sanitization
   if (result.length > maxLength) {
     result = result.substring(0, maxLength - 3) + "...";
@@ -404,45 +411,50 @@ export function createQueueDispatchTool(
           discordChannelId,
         };
 
-        // Send Discord notification BEFORE creating the Redis record.
-        // If Discord send fails → return error, do NOT create the record.
-        if (discordChannelId) {
-          try {
-            const messageId = await sendApprovalNotification(discordChannelId, approvalRecord, ttlDays);
-            if (messageId) {
-              approvalRecord.discordMessageId = messageId;
-            }
-          } catch (discordErr) {
-            warnLog(
-              `queue_dispatch: Discord notification failed for approval ${approvalId}: ${discordErr instanceof Error ? discordErr.message : String(discordErr)}`,
-            );
-            return jsonResult({
-              status: "error",
-              error: `Failed to send approval notification: ${discordErr instanceof Error ? discordErr.message : String(discordErr)}`,
-            });
-          }
+        // FIX-2: Require discordChannelId — without it, Kevin will never see the approval.
+        // A missing channel config creates silent orphan approvals that expire unseen.
+        if (!discordChannelId) {
+          return jsonResult({
+            status: "error",
+            error:
+              "Approval channel not configured (approval.discordChannelId). Cannot route approval request.",
+          });
         }
 
-        // Write approval record to Redis with native TTL (not BullMQ)
+        // Send Discord notification BEFORE creating the Redis record.
+        // If Discord send fails → return error, do NOT create the record.
         try {
-          await state.connection.set(
+          const messageId = await sendApprovalNotification(discordChannelId, approvalRecord, ttlDays);
+          if (messageId) {
+            approvalRecord.discordMessageId = messageId;
+          }
+        } catch (discordErr) {
+          warnLog(
+            `queue_dispatch: Discord notification failed for approval ${approvalId}: ${discordErr instanceof Error ? discordErr.message : String(discordErr)}`,
+          );
+          return jsonResult({
+            status: "error",
+            error: `Failed to send approval notification: ${discordErr instanceof Error ? discordErr.message : String(discordErr)}`,
+          });
+        }
+
+        // FIX-4: Write approval record atomically via MULTI/EXEC pipeline.
+        // Prevents partial writes where the record exists but isn't indexed (or vice versa).
+        try {
+          const pipeline = state.connection.multi();
+          pipeline.set(
             `orch:approval:${approvalId}`,
             JSON.stringify(approvalRecord),
             "EX",
             ttlSeconds,
           );
-
           // Index in pending sorted set (score = createdAt for chronological ordering)
-          await state.connection.zadd("orch:approvals:pending", createdAt, approvalId);
-
+          pipeline.zadd("orch:approvals:pending", createdAt, approvalId);
           // Index by project if provided
           if (project) {
-            await state.connection.zadd(
-              `orch:approvals:project:${project}`,
-              createdAt,
-              approvalId,
-            );
+            pipeline.zadd(`orch:approvals:project:${project}`, createdAt, approvalId);
           }
+          await pipeline.exec();
         } catch (redisErr) {
           warnLog(
             `queue_dispatch: Redis write failed for approval ${approvalId}: ${redisErr instanceof Error ? redisErr.message : String(redisErr)}`,

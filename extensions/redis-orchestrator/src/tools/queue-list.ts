@@ -112,7 +112,8 @@ export function createQueueListTool(
 
             const raw = await state.connection!.get(`orch:approval:${id}`);
             if (!raw) {
-              // TTL expired — skip (lazy pruning of sorted set)
+              // FIX-5: Key expired — actually prune the stale entry from the sorted set
+              await state.connection!.zrem("orch:approvals:pending", id);
               continue;
             }
 
