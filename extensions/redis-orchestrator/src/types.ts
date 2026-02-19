@@ -90,6 +90,49 @@ export interface CircuitBreakerState {
 }
 
 /**
+ * Approval record stored in Redis for human-gated dispatches.
+ * Phase 3.6 Batch 1.
+ *
+ * Stored as: orch:approval:{id}  (string JSON, native TTL = 7 days)
+ * Indexed in: orch:approvals:pending  (sorted set, score = createdAt)
+ *             orch:approvals:project:{project}  (sorted set, if project is set)
+ *
+ * NOT stored in BullMQ — approval records are human-gated with a 7-day window
+ * and have no worker. Using BullMQ for these would misuse its lifecycle mechanisms.
+ */
+export interface ApprovalRecord {
+  id: string; // uuid — used as the jobId returned to callers
+  status: "pending" | "approved" | "rejected" | "expired" | "approved_spawn_failed";
+
+  // Original dispatch params (full, not truncated — for spawn context in Batch 2)
+  callerAgentId: string;
+  callerSessionKey: string;
+  target: string;
+  task: string; // full task, not truncated
+  label?: string;
+  project?: string;
+  model?: string;
+  thinking?: string;
+  runTimeoutSeconds?: number;
+  cleanup?: "delete" | "keep";
+  reason?: string; // why approval is required (human-readable)
+
+  // Timestamps
+  createdAt: number;
+  approvedAt?: number;
+  rejectedAt?: number;
+  expiredAt?: number;
+
+  // Discord linkage
+  discordMessageId?: string; // message ID in #approval channel (set after send)
+  discordChannelId?: string;
+
+  // Spawn result (set in Batch 2 on /approve)
+  spawnRunId?: string;
+  spawnSessionKey?: string;
+}
+
+/**
  * A learning entry stored in the Redis learning index.
  * Phase 3.5 Batch 3.
  */

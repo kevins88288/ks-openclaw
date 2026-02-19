@@ -101,6 +101,42 @@ export const RedisOrchestratorConfigType = Type.Object(
         { additionalProperties: false },
       ),
     ),
+    // Phase 3.6: Approval queue configuration
+    // Example values:
+    //   discordChannelId: "1473744582071160833"  (#approval channel)
+    //   authorizedApprovers: ["209870510543208449"]  (Kevin's Discord user ID)
+    approval: Type.Optional(
+      Type.Object(
+        {
+          discordChannelId: Type.Optional(
+            Type.String({
+              description:
+                "Discord channel ID for approval notifications (e.g. #approval: 1473744582071160833)",
+            }),
+          ),
+          ttlDays: Type.Optional(
+            Type.Number({
+              default: 7,
+              minimum: 1,
+              description: "TTL in days for approval records (default: 7)",
+            }),
+          ),
+          orchestrators: Type.Optional(
+            Type.Array(Type.String(), {
+              description:
+                'Agent IDs that bypass approval gate by default (default: ["lucius","ultron","meta","main"])',
+            }),
+          ),
+          authorizedApprovers: Type.Optional(
+            Type.Array(Type.String(), {
+              description:
+                "Discord user IDs allowed to /approve requests. REQUIRED — empty list = nobody can approve. (Kevin: 209870510543208449)",
+            }),
+          ),
+        },
+        { additionalProperties: false },
+      ),
+    ),
   },
   { additionalProperties: false },
 );
@@ -211,6 +247,16 @@ const jsonSchema: Record<string, unknown> = {
       additionalProperties: false,
       properties: {
         ttlDays: { type: "number", default: 365 },
+      },
+    },
+    approval: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        discordChannelId: { type: "string" },
+        ttlDays: { type: "number", default: 7 },
+        orchestrators: { type: "array", items: { type: "string" } },
+        authorizedApprovers: { type: "array", items: { type: "string" } },
       },
     },
   },

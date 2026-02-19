@@ -7,12 +7,19 @@
  * Phase 3 Task 3.12: When the circuit breaker is open (Redis down),
  * falls back to direct sessions_spawn via callGateway so agent work
  * continues even without Redis.
+ *
+ * Phase 3.6 Batch 1: Approval routing for non-orchestrator callers.
+ * Non-orchestrators (or callers with requiresApproval: true) create
+ * orch:approval:{id} records instead of BullMQ jobs.
  */
 
+import { randomUUID } from "node:crypto";
 import { Type } from "@sinclair/typebox";
 import type { OpenClawPluginToolContext, AnyAgentTool } from "openclaw/plugin-sdk";
 import { jsonResult, readStringParam, optionalStringEnum } from "openclaw/plugin-sdk";
-import { isSystemAgent } from "../auth-helpers.js";
+import { isSystemAgent, isOrchestrator } from "../auth-helpers.js";
+import type { ApprovalRecord } from "../types.js";
+import type { RedisOrchestratorConfig } from "../config-schema.js";
 // COUPLING: not in plugin-sdk — tracks src/config/config.js. File SDK exposure request if this breaks.
 import { loadConfig } from "../../../../src/config/config.js";
 // COUPLING: not in plugin-sdk — tracks src/routing/session-key.js. File SDK exposure request if this breaks.
@@ -52,6 +59,19 @@ const QueueDispatchSchema = Type.Object({
   ),
   storeResult: Type.Optional(
     Type.Boolean({ description: "If true, capture agent's final message in job record after completion" }),
+  ),
+  // Phase 3.6: Approval routing
+  requiresApproval: Type.Optional(
+    Type.Boolean({
+      description:
+        "If true, route through approval queue regardless of caller identity. Orchestrators use this for merge/prod gates.",
+    }),
+  ),
+  reason: Type.Optional(
+    Type.String({
+      maxLength: 200,
+      description: "Human-readable reason why approval is required (included in Discord notification)",
+    }),
   ),
 });
 
@@ -112,6 +132,104 @@ return current
 /** Simple warn logger — tool context doesn't expose logger, so use console */
 function warnLog(msg: string): void {
   console.warn(`[redis-orchestrator] ${msg}`);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3.6 Batch 1: Approval routing helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Sanitize task text for inclusion in Discord notifications.
+ *
+ * Required to prevent mention injection (@everyone), markdown injection,
+ * RTL override characters, and null bytes.
+ * Truncation happens AFTER sanitization, not before.
+ */
+function sanitizeTaskForDiscord(task: string, maxLength = 500): string {
+  let result = task;
+
+  // Replace mention patterns with safe literal text
+  result = result.replace(/@everyone/g, "[at-everyone]");
+  result = result.replace(/@here/g, "[at-here]");
+  result = result.replace(/<@&\d+>/g, "[at-role]");
+  result = result.replace(/<@!?\d+>/g, "[at-user]");
+
+  // Strip null bytes and Unicode RTL/direction override characters
+  result = result.replace(/\u0000/g, "");
+  result = result.replace(/[\u202e\u200f\u200e]/g, "");
+
+  // Truncate AFTER sanitization
+  if (result.length > maxLength) {
+    result = result.substring(0, maxLength - 3) + "...";
+  }
+
+  return result;
+}
+
+/**
+ * Format a human-readable expiry string for the Discord notification.
+ * Uses the configured TTL or the default 7 days.
+ */
+function formatExpiryDate(ttlDays: number): string {
+  const expiry = new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000);
+  return expiry.toUTCString();
+}
+
+/**
+ * Build the Discord approval notification message.
+ */
+function buildApprovalNotification(record: ApprovalRecord, ttlDays: number): string {
+  const sanitizedTask = sanitizeTaskForDiscord(record.task, 500);
+  const expiryStr = formatExpiryDate(ttlDays);
+
+  return [
+    "🔔 **Approval Request**",
+    "",
+    `**From:** ${record.callerAgentId} → ${record.target}`,
+    `**Label:** ${record.label ?? "unlabeled"}`,
+    `**Project:** ${record.project ?? "—"}`,
+    `**Job ID:** \`${record.id}\``,
+    record.reason ? `**Reason:** ${record.reason}` : null,
+    "",
+    "**Request:**",
+    "```",
+    sanitizedTask,
+    "```",
+    "",
+    `**Expires:** ${expiryStr}`,
+    "",
+    `To approve: \`/approve ${record.id}\``,
+    `To reject: \`/reject ${record.id}\``,
+  ]
+    .filter((line) => line !== null)
+    .join("\n");
+}
+
+/**
+ * Send the Discord approval notification.
+ *
+ * Returns the Discord message ID if available, or undefined on success with no ID.
+ * Throws on failure — caller must NOT create the Redis record if this throws.
+ */
+async function sendApprovalNotification(
+  channelId: string,
+  record: ApprovalRecord,
+  ttlDays: number,
+): Promise<string | undefined> {
+  const message = buildApprovalNotification(record, ttlDays);
+
+  const response = await callGateway<{ messageId?: string }>({
+    method: "send",
+    params: {
+      to: channelId,
+      channel: "discord",
+      message,
+      idempotencyKey: `approval-notify-${record.id}`,
+    },
+    timeoutMs: 15_000,
+  });
+
+  return response?.messageId;
 }
 
 export function createQueueDispatchTool(
@@ -243,9 +361,109 @@ export function createQueueDispatchTool(
         });
       }
 
-      // --- Rate limiting (Phase 3 Task 3.4) ---
+      // Phase 3.6 Batch 1: Approval routing
+      // requiresApproval: true always routes through approval (e.g., merge/prod gates).
+      // Non-orchestrators always require approval.
+      // Orchestrators without requiresApproval: true bypass approval and dispatch normally.
       const callerAgentId = dispatcherAgentId;
       const pluginConfig = state.pluginConfig as Record<string, any> | undefined;
+      const needsApproval =
+        params.requiresApproval === true ||
+        !isOrchestrator(callerAgentId, pluginConfig as RedisOrchestratorConfig | undefined);
+
+      if (needsApproval) {
+        const approvalConfig = pluginConfig?.approval as Record<string, unknown> | undefined;
+        const discordChannelId =
+          typeof approvalConfig?.discordChannelId === "string"
+            ? approvalConfig.discordChannelId
+            : undefined;
+        const ttlDays =
+          typeof approvalConfig?.ttlDays === "number" ? approvalConfig.ttlDays : 7;
+        const ttlSeconds = ttlDays * 24 * 60 * 60;
+        const reason =
+          typeof params.reason === "string" ? (params.reason as string) : undefined;
+
+        const approvalId = randomUUID();
+        const createdAt = Date.now();
+
+        const approvalRecord: ApprovalRecord = {
+          id: approvalId,
+          status: "pending",
+          callerAgentId,
+          callerSessionKey: dispatcherSessionKey,
+          target: targetAgentId,
+          task,
+          label,
+          project,
+          model,
+          thinking,
+          runTimeoutSeconds: runTimeoutSeconds || undefined,
+          cleanup,
+          reason,
+          createdAt,
+          discordChannelId,
+        };
+
+        // Send Discord notification BEFORE creating the Redis record.
+        // If Discord send fails → return error, do NOT create the record.
+        if (discordChannelId) {
+          try {
+            const messageId = await sendApprovalNotification(discordChannelId, approvalRecord, ttlDays);
+            if (messageId) {
+              approvalRecord.discordMessageId = messageId;
+            }
+          } catch (discordErr) {
+            warnLog(
+              `queue_dispatch: Discord notification failed for approval ${approvalId}: ${discordErr instanceof Error ? discordErr.message : String(discordErr)}`,
+            );
+            return jsonResult({
+              status: "error",
+              error: `Failed to send approval notification: ${discordErr instanceof Error ? discordErr.message : String(discordErr)}`,
+            });
+          }
+        }
+
+        // Write approval record to Redis with native TTL (not BullMQ)
+        try {
+          await state.connection.set(
+            `orch:approval:${approvalId}`,
+            JSON.stringify(approvalRecord),
+            "EX",
+            ttlSeconds,
+          );
+
+          // Index in pending sorted set (score = createdAt for chronological ordering)
+          await state.connection.zadd("orch:approvals:pending", createdAt, approvalId);
+
+          // Index by project if provided
+          if (project) {
+            await state.connection.zadd(
+              `orch:approvals:project:${project}`,
+              createdAt,
+              approvalId,
+            );
+          }
+        } catch (redisErr) {
+          warnLog(
+            `queue_dispatch: Redis write failed for approval ${approvalId}: ${redisErr instanceof Error ? redisErr.message : String(redisErr)}`,
+          );
+          return jsonResult({
+            status: "error",
+            error: `Failed to store approval record: ${redisErr instanceof Error ? redisErr.message : String(redisErr)}`,
+          });
+        }
+
+        return jsonResult({
+          jobId: approvalId,
+          status: "pending_approval",
+          approvalRequired: true,
+          target: targetAgentId,
+        });
+      }
+
+      // Non-approval path: existing BullMQ dispatch behavior below.
+      // --- Rate limiting (Phase 3 Task 3.4) ---
+      // Note: pluginConfig and callerAgentId are already declared above in the approval check.
       const rateLimitConfig = pluginConfig?.rateLimit as Record<string, unknown> | undefined;
       const dispatchesPerMinute = (rateLimitConfig?.dispatchesPerMinute as number) ?? 10;
       const maxQueueDepth = (rateLimitConfig?.maxQueueDepth as number) ?? 50;

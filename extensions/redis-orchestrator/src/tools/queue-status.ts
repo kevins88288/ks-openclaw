@@ -5,12 +5,14 @@
  * Uses the Redis job index for O(1) lookup.
  *
  * Phase 3: Cross-agent authorization — agents can only see jobs they dispatched or that target them.
+ * Phase 3.6 Batch 1: If jobId doesn't match a BullMQ job, check orch:approval:{jobId}.
  */
 
 import { Type } from "@sinclair/typebox";
 import type { OpenClawPluginToolContext, AnyAgentTool } from "openclaw/plugin-sdk";
 import { jsonResult, readStringParam } from "openclaw/plugin-sdk";
 import type { PluginState } from "../../index.js";
+import type { ApprovalRecord } from "../types.js";
 import { formatRelativeTime } from "../utils.js";
 import { isSystemAgent, stripSensitiveFields } from "../auth-helpers.js";
 
@@ -55,6 +57,68 @@ export function createQueueStatusTool(
               message: "Job tracked via fallback — no BullMQ record. Check sessions_spawn output directly.",
               fallback: true,
             });
+          }
+
+          // Phase 3.6 Batch 1: Check if jobId is an approval record
+          const approvalRaw = await state.connection!.get(`orch:approval:${jobId}`);
+          if (approvalRaw) {
+            try {
+              const record: ApprovalRecord = JSON.parse(approvalRaw);
+
+              // Authorization: non-system agents can only see approvals they initiated or target them
+              if (!isSystemAgent(callerAgentId)) {
+                const isCaller = record.callerAgentId === callerAgentId;
+                const isTarget = record.target === callerAgentId;
+                if (!isCaller && !isTarget) {
+                  return jsonResult({
+                    status: "unauthorized",
+                    error: "Unauthorized: you can only view approvals you requested or that target you.",
+                  });
+                }
+              }
+
+              const approvalResult: Record<string, unknown> = {
+                jobId: record.id,
+                type: "approval",
+                status: record.status,
+                approvalStatus: record.status,
+                callerAgentId: record.callerAgentId,
+                target: record.target,
+                label: record.label,
+                project: record.project,
+                reason: record.reason,
+                createdAt: {
+                  relative: formatRelativeTime(record.createdAt),
+                  iso: new Date(record.createdAt).toISOString(),
+                },
+              };
+
+              if (record.approvedAt) {
+                approvalResult.approvedAt = {
+                  relative: formatRelativeTime(record.approvedAt),
+                  iso: new Date(record.approvedAt).toISOString(),
+                };
+              }
+
+              if (record.rejectedAt) {
+                approvalResult.rejectedAt = {
+                  relative: formatRelativeTime(record.rejectedAt),
+                  iso: new Date(record.rejectedAt).toISOString(),
+                };
+              }
+
+              if (record.spawnRunId) {
+                approvalResult.spawnRunId = record.spawnRunId;
+              }
+
+              if (record.spawnSessionKey) {
+                approvalResult.spawnSessionKey = record.spawnSessionKey;
+              }
+
+              return jsonResult(approvalResult);
+            } catch {
+              // Malformed approval record — treat as not found
+            }
           }
 
           return jsonResult({

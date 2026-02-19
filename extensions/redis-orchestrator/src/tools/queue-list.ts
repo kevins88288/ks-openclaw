@@ -4,11 +4,13 @@
  * List jobs across agent queues with optional filtering by agent and status.
  *
  * Phase 3: Cross-agent authorization — agents only see jobs they dispatched or that target them.
+ * Phase 3.6 Batch 1: Support status: "pending_approval" to list approval records.
  */
 
 import { Type } from "@sinclair/typebox";
 import type { OpenClawPluginToolContext, AnyAgentTool } from "openclaw/plugin-sdk";
 import { jsonResult, readStringParam, readNumberParam } from "openclaw/plugin-sdk";
+import type { ApprovalRecord } from "../types.js";
 // COUPLING: not in plugin-sdk — tracks src/routing/session-key.js. File SDK exposure request if this breaks.
 import { normalizeAgentId } from "../../../../src/routing/session-key.js";
 // COUPLING: not in plugin-sdk — tracks src/config/config.js. File SDK exposure request if this breaks.
@@ -28,8 +30,9 @@ const QueueListSchema = Type.Object({
       Type.Literal("active"),
       Type.Literal("completed"),
       Type.Literal("failed"),
+      Type.Literal("pending_approval"),
     ], {
-      description: "Filter by status: queued, active, completed, or failed (optional)",
+      description: "Filter by status: queued, active, completed, failed, or pending_approval (optional)",
     }),
   ),
   limit: Type.Optional(
@@ -90,6 +93,73 @@ export function createQueueListTool(
       const cappedLimit = Math.min(Math.max(1, Math.floor(limit)), 100);
       const callerAgentId = ctx.agentId ?? "";
       const callerIsSystem = isSystemAgent(callerAgentId);
+
+      // Phase 3.6 Batch 1: Handle pending_approval status filter
+      if (statusFilter === "pending_approval") {
+        try {
+          // Use project-specific index if project filter provided
+          const setKey = projectFilter
+            ? `orch:approvals:project:${projectFilter}`
+            : "orch:approvals:pending";
+
+          // zrevrange: newest first (highest score = most recent createdAt)
+          const ids = await state.connection!.zrevrange(setKey, 0, cappedLimit * 3 - 1);
+
+          const approvalJobs: Record<string, unknown>[] = [];
+
+          for (const id of ids) {
+            if (approvalJobs.length >= cappedLimit) break;
+
+            const raw = await state.connection!.get(`orch:approval:${id}`);
+            if (!raw) {
+              // TTL expired — skip (lazy pruning of sorted set)
+              continue;
+            }
+
+            let record: ApprovalRecord;
+            try {
+              record = JSON.parse(raw) as ApprovalRecord;
+            } catch {
+              continue; // Malformed record — skip
+            }
+
+            // Status check: only show truly pending records
+            if (record.status !== "pending") continue;
+
+            // Authorization: non-system agents see only their own requests or requests targeting them
+            if (!callerIsSystem) {
+              const isCaller = record.callerAgentId === callerAgentId;
+              const isTarget = record.target === callerAgentId;
+              if (!isCaller && !isTarget) continue;
+            }
+
+            approvalJobs.push({
+              jobId: record.id,
+              type: "approval",
+              status: "pending",
+              approvalStatus: record.status,
+              callerAgentId: record.callerAgentId,
+              target: record.target,
+              task: record.task.length > 80 ? record.task.substring(0, 77) + "..." : record.task,
+              label: record.label,
+              project: record.project,
+              reason: record.reason,
+              createdAt: formatRelativeTime(record.createdAt),
+            });
+          }
+
+          return jsonResult({
+            jobs: approvalJobs,
+            count: approvalJobs.length,
+            limit: cappedLimit,
+          });
+        } catch (err) {
+          return jsonResult({
+            status: "error",
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
 
       const cfg = loadConfig();
 
