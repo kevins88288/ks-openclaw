@@ -28,6 +28,7 @@ import { createQueueListTool } from "./src/tools/queue-list.js";
 import { createQueueActivityTool } from "./src/tools/queue-activity.js";
 import { createQueueAddLearningTool } from "./src/tools/queue-add-learning.js";
 import { createQueueLearningsTool } from "./src/tools/queue-learnings.js";
+import { registerApprovalCommands } from "./src/approval-commands.js";
 
 /**
  * Shared mutable state container.
@@ -108,6 +109,9 @@ const plugin: OpenClawPluginDefinition = {
     api.registerTool((ctx) => createQueueLearningsTool(state, ctx), {
       name: "queue_learnings",
     });
+
+    // Phase 3.6 Batch 2: Register approval workflow commands
+    registerApprovalCommands(api, state);
 
     // Register CLI commands — connection created lazily inside each command
     api.registerCli(
