@@ -62,6 +62,64 @@
             "default": "discord"
           }
         }
+      },
+      "bullBoard": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "authToken": {
+            "type": "string"
+          }
+        }
+      },
+      "retry": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "agentFailureAttempts": {
+            "type": "number",
+            "default": 3
+          },
+          "agentFailureBaseDelayMs": {
+            "type": "number",
+            "default": 300000
+          }
+        }
+      },
+      "learnings": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "ttlDays": {
+            "type": "number",
+            "default": 365
+          }
+        }
+      },
+      "approval": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "discordChannelId": {
+            "type": "string"
+          },
+          "ttlDays": {
+            "type": "number",
+            "default": 7
+          },
+          "orchestrators": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "authorizedApprovers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
       }
     }
   }
