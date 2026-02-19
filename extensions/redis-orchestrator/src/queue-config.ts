@@ -13,10 +13,15 @@ export const QUEUE_CONFIG = {
   maxStalledCount: 2, // Retry stalled job twice, then DLQ
 
   defaultJobOptions: {
-    attempts: 3, // Max retry attempts
+    // LAUNCH-FAILURE retries only: these handle cases where the Worker's processJob()
+    // fails to spawn the child session (e.g., gateway down, depth limit exceeded).
+    // BullMQ marks the job "completed" once the child session launches successfully.
+    // Agent-level failures (child runs but fails) are handled separately by the
+    // re-dispatch pattern in the agent_end hook (see hooks.ts, Phase 3.5 Batch 1).
+    attempts: 3, // Max launch-failure retry attempts
     backoff: {
       type: "exponential" as const,
-      delay: 5000,
+      delay: 5000, // 5s base delay for launch retries (short — these are transient)
     },
     removeOnComplete: {
       age: 604_800, // Keep completed jobs 7 days (in seconds)

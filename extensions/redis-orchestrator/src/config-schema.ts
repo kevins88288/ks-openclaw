@@ -66,6 +66,77 @@ export const RedisOrchestratorConfigType = Type.Object(
         { additionalProperties: false },
       ),
     ),
+    retry: Type.Optional(
+      Type.Object(
+        {
+          agentFailureAttempts: Type.Optional(
+            Type.Number({
+              default: 3,
+              minimum: 1,
+              description: "Total attempts including initial dispatch (default: 3)",
+            }),
+          ),
+          agentFailureBaseDelayMs: Type.Optional(
+            Type.Number({
+              default: 300_000,
+              minimum: 1000,
+              description: "Base delay in ms for exponential backoff on agent failure (default: 300000 = 5min)",
+            }),
+          ),
+        },
+        { additionalProperties: false },
+      ),
+    ),
+    learnings: Type.Optional(
+      Type.Object(
+        {
+          ttlDays: Type.Optional(
+            Type.Number({
+              default: 365,
+              minimum: 1,
+              description: "TTL in days for individual learning entries (default: 365)",
+            }),
+          ),
+        },
+        { additionalProperties: false },
+      ),
+    ),
+    // Phase 3.6: Approval queue configuration
+    // Example values:
+    //   discordChannelId: "1473744582071160833"  (#approval channel)
+    //   authorizedApprovers: ["209870510543208449"]  (Kevin's Discord user ID)
+    approval: Type.Optional(
+      Type.Object(
+        {
+          discordChannelId: Type.Optional(
+            Type.String({
+              description:
+                "Discord channel ID for approval notifications (e.g. #approval: 1473744582071160833)",
+            }),
+          ),
+          ttlDays: Type.Optional(
+            Type.Number({
+              default: 7,
+              minimum: 1,
+              description: "TTL in days for approval records (default: 7)",
+            }),
+          ),
+          orchestrators: Type.Optional(
+            Type.Array(Type.String(), {
+              description:
+                'Agent IDs that bypass approval gate by default (default: ["lucius","ultron","meta","main"])',
+            }),
+          ),
+          authorizedApprovers: Type.Optional(
+            Type.Array(Type.String(), {
+              description:
+                "Discord user IDs allowed to /approve requests. REQUIRED — empty list = nobody can approve. (Kevin: 209870510543208449)",
+            }),
+          ),
+        },
+        { additionalProperties: false },
+      ),
+    ),
   },
   { additionalProperties: false },
 );
@@ -161,6 +232,31 @@ const jsonSchema: Record<string, unknown> = {
       additionalProperties: false,
       properties: {
         authToken: { type: "string" },
+      },
+    },
+    retry: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        agentFailureAttempts: { type: "number", default: 3 },
+        agentFailureBaseDelayMs: { type: "number", default: 300000 },
+      },
+    },
+    learnings: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        ttlDays: { type: "number", default: 365 },
+      },
+    },
+    approval: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        discordChannelId: { type: "string" },
+        ttlDays: { type: "number", default: 7 },
+        orchestrators: { type: "array", items: { type: "string" } },
+        authorizedApprovers: { type: "array", items: { type: "string" } },
       },
     },
   },
