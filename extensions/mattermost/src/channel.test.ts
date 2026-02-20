@@ -16,6 +16,7 @@ import {
   createMattermostTestConfig,
   withMockedGlobalFetch,
 } from "./mattermost/reactions.test-helpers.js";
+import { sendMessageMattermost } from "./mattermost/send.js";
 
 describe("mattermostPlugin", () => {
   beforeEach(() => {
@@ -400,6 +401,90 @@ describe("mattermostPlugin", () => {
           accountId: "default",
           replyToId: "post-root",
         }),
+      );
+    });
+  });
+
+  describe("outbound threadId routing", () => {
+    const mockSend = sendMessageMattermost as ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      mockSend.mockClear();
+    });
+
+    it("uses threadId as replyToId when replyToId is absent", async () => {
+      await mattermostPlugin.outbound!.sendText!({
+        cfg: {} as OpenClawConfig,
+        to: "channel:town-square",
+        text: "sub-agent result",
+        threadId: "root-post-123",
+      } as any);
+
+      expect(mockSend).toHaveBeenCalledWith(
+        "channel:town-square",
+        "sub-agent result",
+        expect.objectContaining({ replyToId: "root-post-123" }),
+      );
+    });
+
+    it("prefers replyToId over threadId when both present", async () => {
+      await mattermostPlugin.outbound!.sendText!({
+        cfg: {} as OpenClawConfig,
+        to: "channel:town-square",
+        text: "reply",
+        replyToId: "specific-post-456",
+        threadId: "root-post-123",
+      } as any);
+
+      expect(mockSend).toHaveBeenCalledWith(
+        "channel:town-square",
+        "reply",
+        expect.objectContaining({ replyToId: "specific-post-456" }),
+      );
+    });
+
+    it("does not set replyToId when neither replyToId nor threadId present", async () => {
+      await mattermostPlugin.outbound!.sendText!({
+        cfg: {} as OpenClawConfig,
+        to: "channel:town-square",
+        text: "top-level message",
+      } as any);
+
+      expect(mockSend).toHaveBeenCalledWith(
+        "channel:town-square",
+        "top-level message",
+        expect.objectContaining({ replyToId: undefined }),
+      );
+    });
+
+    it("uses threadId for sendMedia when replyToId is absent", async () => {
+      await mattermostPlugin.outbound!.sendMedia!({
+        cfg: {} as OpenClawConfig,
+        to: "channel:town-square",
+        text: "media in thread",
+        mediaUrl: "https://example.com/image.png",
+        threadId: "root-post-789",
+      } as any);
+
+      expect(mockSend).toHaveBeenCalledWith(
+        "channel:town-square",
+        "media in thread",
+        expect.objectContaining({ replyToId: "root-post-789" }),
+      );
+    });
+
+    it("coerces numeric threadId to string", async () => {
+      await mattermostPlugin.outbound!.sendText!({
+        cfg: {} as OpenClawConfig,
+        to: "channel:town-square",
+        text: "numeric thread",
+        threadId: 42,
+      } as any);
+
+      expect(mockSend).toHaveBeenCalledWith(
+        "channel:town-square",
+        "numeric thread",
+        expect.objectContaining({ replyToId: "42" }),
       );
     });
   });
