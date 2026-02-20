@@ -186,6 +186,7 @@ async function maybeQueueSubagentAnnounce(params: {
   const canonicalKey = resolveRequesterStoreKey(cfg, params.requesterSessionKey);
   const sessionId = entry?.sessionId;
   if (!sessionId) {
+    defaultRuntime.log?.(`Subagent announce: no sessionId for ${canonicalKey}, skipping queue`);
     return "none";
   }
 
@@ -227,6 +228,9 @@ async function maybeQueueSubagentAnnounce(params: {
     return "queued";
   }
 
+  defaultRuntime.log?.(
+    `Subagent announce: session ${canonicalKey} not active (mode=${queueSettings.mode}), falling through to direct`,
+  );
   return "none";
 }
 
@@ -587,10 +591,12 @@ export async function runSubagentAnnounceFlow(params: {
       requesterOrigin: targetRequesterOrigin,
     });
     if (queued === "steered") {
+      defaultRuntime.log?.(`Subagent announce: steered into ${targetRequesterSessionKey}`);
       didAnnounce = true;
       return true;
     }
     if (queued === "queued") {
+      defaultRuntime.log?.(`Subagent announce: queued for ${targetRequesterSessionKey}`);
       didAnnounce = true;
       return true;
     }
@@ -602,6 +608,11 @@ export async function runSubagentAnnounceFlow(params: {
       const { entry } = loadRequesterSessionEntry(targetRequesterSessionKey);
       directOrigin = deliveryContextFromSession(entry);
     }
+    defaultRuntime.log?.(
+      `Subagent announce: direct → ${targetRequesterSessionKey} deliver=${!requesterIsSubagent} ` +
+        `ch=${directOrigin?.channel ?? "none"} to=${directOrigin?.to ?? "none"} ` +
+        `threadId=${directOrigin?.threadId ?? "none"}`,
+    );
     // Use a deterministic idempotency key so the gateway dedup cache
     // catches duplicates if this announce is also queued by the gateway-
     // level message queue while the main session is busy (#17122).
@@ -621,10 +632,10 @@ export async function runSubagentAnnounceFlow(params: {
             : undefined,
         idempotencyKey: directIdempotencyKey,
       },
-      expectFinal: true,
       timeoutMs: 15_000,
     });
 
+    defaultRuntime.log?.(`Subagent announce: delivered to ${targetRequesterSessionKey}`);
     didAnnounce = true;
   } catch (err) {
     defaultRuntime.error?.(`Subagent announce failed: ${String(err)}`);
