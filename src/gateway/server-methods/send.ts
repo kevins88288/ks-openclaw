@@ -64,8 +64,8 @@ export const sendHandlers: GatewayRequestHandlers = {
       gifPlayback?: boolean;
       channel?: string;
       accountId?: string;
-      sessionKey?: string;
       threadId?: string;
+      sessionKey?: string;
       idempotencyKey: string;
     };
     const idem = request.idempotencyKey;
