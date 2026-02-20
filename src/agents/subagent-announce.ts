@@ -689,6 +689,7 @@ async function maybeQueueSubagentAnnounce(params: {
   const canonicalKey = resolveRequesterStoreKey(cfg, params.requesterSessionKey);
   const sessionId = entry?.sessionId;
   if (!sessionId) {
+    defaultRuntime.log?.(`Subagent announce: no sessionId for ${canonicalKey}, skipping queue`);
     return "none";
   }
 
@@ -734,6 +735,9 @@ async function maybeQueueSubagentAnnounce(params: {
     return "queued";
   }
 
+  defaultRuntime.log?.(
+    `Subagent announce: session ${canonicalKey} not active (mode=${queueSettings.mode}), falling through to direct`,
+  );
   return "none";
 }
 
