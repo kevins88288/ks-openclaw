@@ -111,8 +111,8 @@ function assertCommandRegistry(commands: ChatCommandDefinition[]): void {
     }
 
     for (const alias of command.textAliases) {
-      if (!alias.startsWith("/") && !alias.startsWith("!")) {
-        throw new Error(`Command alias must start with '/' or '!': ${alias}`);
+      if (!alias.startsWith("/")) {
+        throw new Error(`Command alias missing leading '/': ${alias}`);
       }
       const aliasKey = alias.toLowerCase();
       if (textAliases.has(aliasKey)) {
@@ -653,25 +653,6 @@ function buildChatCommands(): ChatCommandDefinition[] {
   registerAlias(commands, "reasoning", "/reason");
   registerAlias(commands, "elevated", "/elev");
   registerAlias(commands, "steer", "/tell");
-
-  // !bang aliases for Matrix compatibility (Matrix clients intercept /slash commands)
-  registerAlias(commands, "status", "!status");
-  registerAlias(commands, "reset", "!reset");
-  registerAlias(commands, "help", "!help");
-  registerAlias(commands, "commands", "!commands");
-  registerAlias(commands, "reasoning", "!reasoning");
-  registerAlias(commands, "verbose", "!verbose");
-  registerAlias(commands, "model", "!model");
-  registerAlias(commands, "models", "!models");
-  registerAlias(commands, "new", "!new");
-  registerAlias(commands, "compact", "!compact");
-  registerAlias(commands, "usage", "!usage");
-  registerAlias(commands, "stop", "!stop");
-  registerAlias(commands, "kill", "!kill");
-  registerAlias(commands, "whoami", "!whoami");
-  registerAlias(commands, "context", "!context");
-  registerAlias(commands, "think", "!think");
-  registerAlias(commands, "skill", "!skill");
 
   assertCommandRegistry(commands);
   return commands;
