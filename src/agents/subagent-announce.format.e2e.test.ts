@@ -503,11 +503,10 @@ describe("subagent announce formatting", () => {
     expect(didAnnounce).toBe(true);
     const call = agentSpy.mock.calls[0]?.[0] as {
       params?: Record<string, unknown>;
-      expectFinal?: boolean;
     };
     expect(call?.params?.channel).toBe("whatsapp");
     expect(call?.params?.accountId).toBe("acct-123");
-    expect(call?.expectFinal).toBe(true);
+    expect(call?.params?.deliver).toBe(true);
   });
 
   it("injects direct announce into requester subagent session instead of chat channel", async () => {
@@ -881,5 +880,61 @@ describe("subagent announce formatting", () => {
     expect(call?.params?.sessionKey).toBe("agent:main:main");
     expect(call?.params?.deliver).toBe(true);
     expect(call?.params?.channel).toBe("discord");
+  });
+
+  it("suppresses external delivery when suppressExternalDelivery is true (queue_dispatch)", async () => {
+    const { runSubagentAnnounceFlow } = await import("./subagent-announce.js");
+    embeddedRunMock.isEmbeddedPiRunActive.mockReturnValue(false);
+    embeddedRunMock.isEmbeddedPiRunStreaming.mockReturnValue(false);
+
+    // Requester is a depth-0 agent (like Lucius dispatching via queue_dispatch)
+    const didAnnounce = await runSubagentAnnounceFlow({
+      childSessionKey: "agent:main:subagent:test",
+      childRunId: "run-suppress",
+      requesterSessionKey: "agent:main:main",
+      requesterOrigin: { channel: "mattermost", accountId: "acct-mm", to: "user:abc" },
+      requesterDisplayKey: "main",
+      suppressExternalDelivery: true,
+      ...defaultOutcomeAnnounce,
+    });
+
+    expect(didAnnounce).toBe(true);
+    const call = agentSpy.mock.calls[0]?.[0] as { params?: Record<string, unknown> };
+    // Should inject into session without external delivery
+    expect(call?.params?.deliver).toBe(false);
+    expect(call?.params?.channel).toBeUndefined();
+    expect(call?.params?.to).toBeUndefined();
+    expect(call?.params?.accountId).toBeUndefined();
+    // Announce text should use internal orchestration instruction, not user delivery
+    const msg = call?.params?.message as string;
+    expect(msg).toContain("internal orchestration update");
+    expect(msg).not.toContain("ready for user delivery");
+  });
+
+  it("delivers externally when suppressExternalDelivery is not set (default)", async () => {
+    const { runSubagentAnnounceFlow } = await import("./subagent-announce.js");
+    embeddedRunMock.isEmbeddedPiRunActive.mockReturnValue(false);
+    embeddedRunMock.isEmbeddedPiRunStreaming.mockReturnValue(false);
+
+    // Same depth-0 requester but without suppressExternalDelivery
+    const didAnnounce = await runSubagentAnnounceFlow({
+      childSessionKey: "agent:main:subagent:test",
+      childRunId: "run-no-suppress",
+      requesterSessionKey: "agent:main:main",
+      requesterOrigin: { channel: "mattermost", accountId: "acct-mm", to: "user:abc" },
+      requesterDisplayKey: "main",
+      ...defaultOutcomeAnnounce,
+    });
+
+    expect(didAnnounce).toBe(true);
+    const call = agentSpy.mock.calls[0]?.[0] as { params?: Record<string, unknown> };
+    // Should deliver externally (default behavior)
+    expect(call?.params?.deliver).toBe(true);
+    expect(call?.params?.channel).toBe("mattermost");
+    expect(call?.params?.to).toBe("user:abc");
+    expect(call?.params?.accountId).toBe("acct-mm");
+    const msg = call?.params?.message as string;
+    expect(msg).toContain("ready for user delivery");
+    expect(msg).not.toContain("internal orchestration update");
   });
 });

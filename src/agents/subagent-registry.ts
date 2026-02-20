@@ -34,6 +34,9 @@ export type SubagentRunRecord = {
   announceRetryCount?: number;
   /** Timestamp of the last announce retry attempt (for backoff). */
   lastAnnounceRetryAt?: number;
+  /** When true, announce suppresses external delivery even for depth-0 requesters.
+   * Used by queue_dispatch where the requester is a top-level agent. */
+  suppressExternalDelivery?: boolean;
 };
 
 const subagentRuns = new Map<string, SubagentRunRecord>();
@@ -98,6 +101,7 @@ function startSubagentAnnounceCleanupFlow(runId: string, entry: SubagentRunRecor
     endedAt: entry.endedAt,
     label: entry.label,
     outcome: entry.outcome,
+    suppressExternalDelivery: entry.suppressExternalDelivery,
   }).then((didAnnounce) => {
     finalizeSubagentCleanup(runId, entry.cleanup, didAnnounce);
   });
@@ -478,6 +482,7 @@ export function registerSubagentRun(params: {
   label?: string;
   model?: string;
   runTimeoutSeconds?: number;
+  suppressExternalDelivery?: boolean;
 }) {
   const now = Date.now();
   const cfg = loadConfig();
@@ -501,6 +506,7 @@ export function registerSubagentRun(params: {
     startedAt: now,
     archiveAtMs,
     cleanupHandled: false,
+    suppressExternalDelivery: params.suppressExternalDelivery || undefined,
   });
   ensureListener();
   persistSubagentRuns();

@@ -11,22 +11,21 @@
 
 /**
  * ARCHITECTURE: Dispatch Queue Model (Option B)
- * 
+ *
  * BullMQ job lifecycle represents DISPATCH, not agent work:
  * - BullMQ "completed" = child session successfully launched
  * - BullMQ "failed" = child session failed to launch (will retry)
- * 
+ *
  * Actual agent lifecycle is tracked in job.data.status:
  * - "queued" → "active" (Worker launched child) → "completed"/"failed" (agent_end hook)
- * 
+ *
  * The existing announce pipeline handles result delivery back to the
  * dispatcher's session. The agent_end hook updates job.data.status as the ack.
  */
 
-import type { PluginLogger } from "openclaw/plugin-sdk";
-import { Worker, UnrecoverableError, type Job } from "bullmq";
 import crypto from "node:crypto";
-import type { AgentJob } from "./types.js";
+import { Worker, UnrecoverableError, type Job } from "bullmq";
+import type { PluginLogger } from "openclaw/plugin-sdk";
 // COUPLING: not in plugin-sdk — tracks src/agents/agent-scope.js. File SDK exposure request if this breaks.
 import { resolveAgentConfig } from "../../../src/agents/agent-scope.js";
 // COUPLING: not in plugin-sdk — tracks src/agents/lanes.js. File SDK exposure request if this breaks.
@@ -58,9 +57,10 @@ import { callGateway } from "../../../src/gateway/call.js";
 import { normalizeAgentId, parseAgentSessionKey } from "../../../src/routing/session-key.js";
 // COUPLING: not in plugin-sdk — tracks src/utils/delivery-context.js. File SDK exposure request if this breaks.
 import { normalizeDeliveryContext } from "../../../src/utils/delivery-context.js";
+import type { JobTracker } from "./job-tracker.js";
 import { createWorkerOptions } from "./queue-config.js";
 import { asBullMQConnection, type RedisConnection } from "./redis-connection.js";
-import type { JobTracker } from "./job-tracker.js";
+import type { AgentJob } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Model helpers (replicated from sessions-spawn-tool.ts)
@@ -229,7 +229,8 @@ async function processJob(
   } catch (err) {
     // If model patch fails with a recoverable error, retry without model
     const msg = err instanceof Error ? err.message : String(err);
-    const modelRecoverable = resolvedModel && (msg.includes("invalid model") || msg.includes("model not allowed"));
+    const modelRecoverable =
+      resolvedModel && (msg.includes("invalid model") || msg.includes("model not allowed"));
     if (modelRecoverable) {
       logger.warn(`worker: model patch warning for job ${job.id}: ${msg}`);
       // Retry without the model field
@@ -301,6 +302,7 @@ async function processJob(
     label: label || undefined,
     model: resolvedModel,
     runTimeoutSeconds: timeoutSeconds,
+    suppressExternalDelivery: true,
   });
 
   // 13. Update BullMQ job data with runtime info
@@ -343,11 +345,15 @@ export function createWorkers(
   for (const agentId of agentIds) {
     const queueName = `agent-${agentId}`;
 
-    const worker = new Worker<AgentJob, string>(queueName, async (job) => processJob(job, logger, jobTracker), {
-      connection: asBullMQConnection(connection),
-      ...workerOpts,
-      prefix: "bull",
-    });
+    const worker = new Worker<AgentJob, string>(
+      queueName,
+      async (job) => processJob(job, logger, jobTracker),
+      {
+        connection: asBullMQConnection(connection),
+        ...workerOpts,
+        prefix: "bull",
+      },
+    );
 
     worker.on("error", (err) => {
       logger.warn(`worker[${agentId}]: error: ${err.message}`);

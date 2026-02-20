@@ -115,6 +115,7 @@ function resolveAnnounceOrigin(
 async function sendAnnounce(item: AnnounceQueueItem) {
   const requesterDepth = getSubagentDepthFromSessionStore(item.sessionKey);
   const requesterIsSubagent = requesterDepth >= 1;
+  const suppressDelivery = requesterIsSubagent || item.suppressExternalDelivery === true;
   const origin = item.origin;
   const threadId =
     origin?.threadId != null && origin.threadId !== "" ? String(origin.threadId) : undefined;
@@ -132,11 +133,11 @@ async function sendAnnounce(item: AnnounceQueueItem) {
     params: {
       sessionKey: item.sessionKey,
       message: item.prompt,
-      channel: requesterIsSubagent ? undefined : origin?.channel,
-      accountId: requesterIsSubagent ? undefined : origin?.accountId,
-      to: requesterIsSubagent ? undefined : origin?.to,
-      threadId: requesterIsSubagent ? undefined : threadId,
-      deliver: !requesterIsSubagent,
+      channel: suppressDelivery ? undefined : origin?.channel,
+      accountId: suppressDelivery ? undefined : origin?.accountId,
+      to: suppressDelivery ? undefined : origin?.to,
+      threadId: suppressDelivery ? undefined : threadId,
+      deliver: !suppressDelivery,
       idempotencyKey,
     },
     timeoutMs: 15_000,
@@ -181,6 +182,7 @@ async function maybeQueueSubagentAnnounce(params: {
   triggerMessage: string;
   summaryLine?: string;
   requesterOrigin?: DeliveryContext;
+  suppressExternalDelivery?: boolean;
 }): Promise<"steered" | "queued" | "none"> {
   const { cfg, entry } = loadRequesterSessionEntry(params.requesterSessionKey);
   const canonicalKey = resolveRequesterStoreKey(cfg, params.requesterSessionKey);
@@ -221,6 +223,7 @@ async function maybeQueueSubagentAnnounce(params: {
         enqueuedAt: Date.now(),
         sessionKey: canonicalKey,
         origin,
+        suppressExternalDelivery: params.suppressExternalDelivery,
       },
       settings: queueSettings,
       send: sendAnnounce,
@@ -390,6 +393,7 @@ export async function runSubagentAnnounceFlow(params: {
   label?: string;
   outcome?: SubagentRunOutcome;
   announceType?: SubagentAnnounceType;
+  suppressExternalDelivery?: boolean;
 }): Promise<boolean> {
   let didAnnounce = false;
   let shouldDeleteChildSession = params.cleanup === "delete";
@@ -548,6 +552,11 @@ export async function runSubagentAnnounceFlow(params: {
       }
     }
 
+    // Queue-dispatched jobs suppress external delivery even when requester depth is 0.
+    // The dispatching agent should receive the result internally (session injection)
+    // and decide when/how to relay it to the human.
+    const suppressDelivery = requesterIsSubagent || params.suppressExternalDelivery === true;
+
     let remainingActiveSubagentRuns = 0;
     try {
       const { countActiveDescendantRuns } = await import("./subagent-registry.js");
@@ -560,7 +569,7 @@ export async function runSubagentAnnounceFlow(params: {
     }
     const replyInstruction = buildAnnounceReplyInstruction({
       remainingActiveSubagentRuns,
-      requesterIsSubagent,
+      requesterIsSubagent: suppressDelivery,
       announceType,
     });
     const statsLine = await buildCompactAnnounceStatsLine({
@@ -589,6 +598,7 @@ export async function runSubagentAnnounceFlow(params: {
       triggerMessage,
       summaryLine: taskLabel,
       requesterOrigin: targetRequesterOrigin,
+      suppressExternalDelivery: params.suppressExternalDelivery,
     });
     if (queued === "steered") {
       defaultRuntime.log?.(`Subagent announce: steered into ${targetRequesterSessionKey}`);
@@ -601,17 +611,18 @@ export async function runSubagentAnnounceFlow(params: {
       return true;
     }
 
-    // Send to the requester session. For nested subagents this is an internal
-    // follow-up injection (deliver=false) so the orchestrator receives it.
+    // Send to the requester session. For nested subagents and queue-dispatched
+    // jobs this is an internal follow-up injection (deliver=false) so the
+    // orchestrating agent receives it without external channel delivery.
     let directOrigin = targetRequesterOrigin;
-    if (!requesterIsSubagent && !directOrigin) {
+    if (!suppressDelivery && !directOrigin) {
       const { entry } = loadRequesterSessionEntry(targetRequesterSessionKey);
       directOrigin = deliveryContextFromSession(entry);
     }
     defaultRuntime.log?.(
-      `Subagent announce: direct → ${targetRequesterSessionKey} deliver=${!requesterIsSubagent} ` +
+      `Subagent announce: direct → ${targetRequesterSessionKey} deliver=${!suppressDelivery} ` +
         `ch=${directOrigin?.channel ?? "none"} to=${directOrigin?.to ?? "none"} ` +
-        `threadId=${directOrigin?.threadId ?? "none"}`,
+        `threadId=${directOrigin?.threadId ?? "none"} suppress=${params.suppressExternalDelivery ?? false}`,
     );
     // Use a deterministic idempotency key so the gateway dedup cache
     // catches duplicates if this announce is also queued by the gateway-
@@ -622,12 +633,12 @@ export async function runSubagentAnnounceFlow(params: {
       params: {
         sessionKey: targetRequesterSessionKey,
         message: triggerMessage,
-        deliver: !requesterIsSubagent,
-        channel: requesterIsSubagent ? undefined : directOrigin?.channel,
-        accountId: requesterIsSubagent ? undefined : directOrigin?.accountId,
-        to: requesterIsSubagent ? undefined : directOrigin?.to,
+        deliver: !suppressDelivery,
+        channel: suppressDelivery ? undefined : directOrigin?.channel,
+        accountId: suppressDelivery ? undefined : directOrigin?.accountId,
+        to: suppressDelivery ? undefined : directOrigin?.to,
         threadId:
-          !requesterIsSubagent && directOrigin?.threadId != null && directOrigin.threadId !== ""
+          !suppressDelivery && directOrigin?.threadId != null && directOrigin.threadId !== ""
             ? String(directOrigin.threadId)
             : undefined,
         idempotencyKey: directIdempotencyKey,

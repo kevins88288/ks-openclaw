@@ -233,6 +233,7 @@ export async function spawnApprovedAgent(
     label: record.label || undefined,
     model: resolvedModel,
     runTimeoutSeconds: timeoutSeconds,
+    suppressExternalDelivery: true,
   });
 
   api.logger.info(
