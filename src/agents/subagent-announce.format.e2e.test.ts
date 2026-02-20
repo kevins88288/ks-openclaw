@@ -8,6 +8,10 @@ type RequesterResolution = {
 } | null;
 
 const agentSpy = vi.fn(async (_req: AgentCallRequest) => ({ runId: "run-main", status: "ok" }));
+const sendSpy = vi.fn(async (_req: AgentCallRequest) => ({
+  messageId: "msg-1",
+  channel: "mattermost",
+}));
 const sessionsDeleteSpy = vi.fn((_req: AgentCallRequest) => undefined);
 const readLatestAssistantReplyMock = vi.fn(
   async (_sessionKey?: string): Promise<string | undefined> => "raw subagent reply",
@@ -63,6 +67,9 @@ vi.mock("../gateway/call.js", () => ({
     if (typed.method === "agent") {
       return await agentSpy(typed);
     }
+    if (typed.method === "send") {
+      return await sendSpy(typed);
+    }
     if (typed.method === "agent.wait") {
       return { status: "error", startedAt: 10, endedAt: 20, error: "boom" };
     }
@@ -105,6 +112,7 @@ vi.mock("../config/config.js", async (importOriginal) => {
 describe("subagent announce formatting", () => {
   beforeEach(() => {
     agentSpy.mockClear();
+    sendSpy.mockClear();
     sessionsDeleteSpy.mockClear();
     embeddedRunMock.isEmbeddedPiRunActive.mockReset().mockReturnValue(false);
     embeddedRunMock.isEmbeddedPiRunStreaming.mockReset().mockReturnValue(false);
@@ -936,5 +944,59 @@ describe("subagent announce formatting", () => {
     const msg = call?.params?.message as string;
     expect(msg).toContain("ready for user delivery");
     expect(msg).not.toContain("internal orchestration update");
+  });
+
+  it("sends user notification when suppressExternalDelivery is true and origin is available", async () => {
+    const { runSubagentAnnounceFlow } = await import("./subagent-announce.js");
+    embeddedRunMock.isEmbeddedPiRunActive.mockReturnValue(false);
+    embeddedRunMock.isEmbeddedPiRunStreaming.mockReturnValue(false);
+
+    await runSubagentAnnounceFlow({
+      childSessionKey: "agent:main:subagent:test",
+      childRunId: "run-notify",
+      requesterSessionKey: "agent:main:main",
+      requesterOrigin: {
+        channel: "mattermost",
+        accountId: "acct-mm",
+        to: "user:abc",
+        threadId: "root-post-123",
+      },
+      requesterDisplayKey: "main",
+      suppressExternalDelivery: true,
+      ...defaultOutcomeAnnounce,
+    });
+
+    // First call: agent injection (deliver=false)
+    expect(agentSpy).toHaveBeenCalledTimes(1);
+    const agentCall = agentSpy.mock.calls[0]?.[0] as { params?: Record<string, unknown> };
+    expect(agentCall?.params?.deliver).toBe(false);
+
+    // Second call: user notification via "send"
+    await expect.poll(() => sendSpy.mock.calls.length).toBe(1);
+    const sendCall = sendSpy.mock.calls[0]?.[0] as { params?: Record<string, unknown> };
+    expect(sendCall?.params?.channel).toBe("mattermost");
+    expect(sendCall?.params?.to).toBe("user:abc");
+    expect(sendCall?.params?.accountId).toBe("acct-mm");
+    expect(sendCall?.params?.threadId).toBe("root-post-123");
+    expect(sendCall?.params?.message).toContain("completed successfully");
+  });
+
+  it("does not send user notification when suppressExternalDelivery is not set", async () => {
+    const { runSubagentAnnounceFlow } = await import("./subagent-announce.js");
+    embeddedRunMock.isEmbeddedPiRunActive.mockReturnValue(false);
+    embeddedRunMock.isEmbeddedPiRunStreaming.mockReturnValue(false);
+
+    await runSubagentAnnounceFlow({
+      childSessionKey: "agent:main:subagent:test",
+      childRunId: "run-no-notify",
+      requesterSessionKey: "agent:main:main",
+      requesterOrigin: { channel: "mattermost", accountId: "acct-mm", to: "user:abc" },
+      requesterDisplayKey: "main",
+      ...defaultOutcomeAnnounce,
+    });
+
+    expect(agentSpy).toHaveBeenCalledTimes(1);
+    // No send notification for non-suppressed (normal delivery path)
+    expect(sendSpy).not.toHaveBeenCalled();
   });
 });

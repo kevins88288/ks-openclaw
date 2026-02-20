@@ -615,7 +615,7 @@ export async function runSubagentAnnounceFlow(params: {
     // jobs this is an internal follow-up injection (deliver=false) so the
     // orchestrating agent receives it without external channel delivery.
     let directOrigin = targetRequesterOrigin;
-    if (!suppressDelivery && !directOrigin) {
+    if (!directOrigin) {
       const { entry } = loadRequesterSessionEntry(targetRequesterSessionKey);
       directOrigin = deliveryContextFromSession(entry);
     }
@@ -647,6 +647,31 @@ export async function runSubagentAnnounceFlow(params: {
     });
 
     defaultRuntime.log?.(`Subagent announce: delivered to ${targetRequesterSessionKey}`);
+
+    // Best-effort user notification for queue-dispatched completions.
+    // Sends a compact status line directly to the user's channel thread so they
+    // can see the sub-agent completed, independent of the agent's processing.
+    if (params.suppressExternalDelivery && directOrigin?.channel && directOrigin?.to) {
+      const notifyText = `Sub-agent ${announceType} "${taskLabel}" ${statusLabel} (${statsLine}).`;
+      callGateway({
+        method: "send",
+        params: {
+          to: directOrigin.to,
+          channel: directOrigin.channel,
+          accountId: directOrigin.accountId,
+          message: notifyText,
+          threadId:
+            directOrigin.threadId != null && directOrigin.threadId !== ""
+              ? String(directOrigin.threadId)
+              : undefined,
+          idempotencyKey: `notify:${directIdempotencyKey}`,
+        },
+        timeoutMs: 5_000,
+      }).catch((err) => {
+        defaultRuntime.log?.(`Subagent announce: user notification failed: ${String(err)}`);
+      });
+    }
+
     didAnnounce = true;
   } catch (err) {
     defaultRuntime.error?.(`Subagent announce failed: ${String(err)}`);
