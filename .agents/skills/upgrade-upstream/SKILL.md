@@ -13,9 +13,10 @@ Merge upstream OpenClaw changes into the ks-openclaw fork safely, preserving loc
 ## ⚠️ CRITICAL RULES
 
 1. **Do NOT restart the gateway** until explicitly told to. The upgrade is code-only until Kevin confirms restart.
-2. **Evaluate end-state, not individual commits.** Upstream may have 1000+ commits between versions. Review the final code, not the commit log.
+2. **Evaluate end-state, not individual commits.** Upstream uses AI-assisted vibe coding with high commit volume (hundreds of commits between versions). Reviewing individual commits is noise and wastes tokens. Always review the final file state on `upstream/main` via `git show upstream/main:<file>`, never the commit history or `git log` for upstream.
 3. **Never force-push to origin/main.** Always merge, never rebase public history.
 4. **Preserve all fork-specific commits.** Our customizations must survive the merge.
+5. **Predict conflicts before merging** with `git merge-tree --write-tree origin/main upstream/main 2>&1 | grep "CONFLICT\|Auto-merging"`.
 
 ---
 
@@ -306,17 +307,62 @@ openclaw gateway restart
 
 Keep this updated after each merge. These are the files we've modified from upstream:
 
-| File                                   | Customization                                    | Added In    |
-| -------------------------------------- | ------------------------------------------------ | ----------- |
-| `src/providers/gcp-adc-token.ts`       | GCP ADC token auth for Vertex AI MaaS            | `883a1f019` |
-| `src/providers/gcp-adc-token.test.ts`  | Tests for GCP ADC token                          | `883a1f019` |
-| `src/agents/model-auth.ts`             | Integration of GCP ADC auth into model auth flow | `883a1f019` |
-| `src/agents/pi-embedded-runner/run.ts` | GCP ADC support in Pi runner                     | `883a1f019` |
-| `src/config/types.models.ts`           | Added `gcp-adc` auth type                        | `883a1f019` |
-| `src/config/zod-schema.core.ts`        | Schema for `gcp-adc` auth type                   | `883a1f019` |
-| `docs/gateway/configuration.md`        | Docs for GCP ADC configuration                   | `883a1f019` |
-| `package.json`                         | Added `google-auth-library` dependency           | `883a1f019` |
-| `pnpm-lock.yaml`                       | Lockfile for above                               | `883a1f019` |
+### GCP ADC Authentication
+
+| File                                   | Customization                                    | Conflict Risk   |
+| -------------------------------------- | ------------------------------------------------ | --------------- |
+| `src/providers/gcp-adc-token.ts`       | GCP ADC token auth for Vertex AI MaaS            | None (new file) |
+| `src/providers/gcp-adc-token.test.ts`  | Tests for GCP ADC token                          | None (new file) |
+| `src/agents/model-auth.ts`             | Integration of GCP ADC auth into model auth flow | LOW             |
+| `src/agents/pi-embedded-runner/run.ts` | GCP ADC support in Pi runner                     | MEDIUM          |
+| `src/config/types.models.ts`           | Added `gcp-adc` auth type                        | LOW             |
+| `src/config/zod-schema.core.ts`        | Schema for `gcp-adc` auth type                   | MEDIUM          |
+| `docs/gateway/configuration.md`        | Docs for GCP ADC configuration                   | LOW             |
+| `package.json`                         | Added `google-auth-library` dependency           | MEDIUM          |
+
+### Redis Orchestrator Extension
+
+| File                                          | Customization                              | Conflict Risk  |
+| --------------------------------------------- | ------------------------------------------ | -------------- |
+| `extensions/redis-orchestrator/**` (33 files) | Job queue, approvals, learning, monitoring | None (new dir) |
+
+### Core SDK — reaction_add Hook
+
+| File                               | Customization                             | Conflict Risk |
+| ---------------------------------- | ----------------------------------------- | ------------- |
+| `src/plugins/types.ts`             | `reaction_add` plugin hook types          | HIGH          |
+| `src/plugins/hooks.ts`             | `reaction_add` hook dispatch              | MEDIUM        |
+| `src/discord/monitor/listeners.ts` | Discord reaction listener for plugin hook | MEDIUM        |
+| `src/plugin-sdk/index.ts`          | Plugin type exports                       | MEDIUM        |
+
+### Subagent Announce — suppressExternalDelivery
+
+| File                                    | Customization                                  | Conflict Risk |
+| --------------------------------------- | ---------------------------------------------- | ------------- |
+| `src/agents/subagent-announce.ts`       | suppressExternalDelivery + user notification   | **HIGH**      |
+| `src/agents/subagent-announce-queue.ts` | suppressExternalDelivery in queue item         | MEDIUM        |
+| `src/agents/subagent-registry.ts`       | suppressExternalDelivery in run record + spawn | MEDIUM        |
+
+### Mattermost Thread Routing
+
+| File                                        | Customization                         | Conflict Risk |
+| ------------------------------------------- | ------------------------------------- | ------------- |
+| `extensions/mattermost/src/channel.ts`      | Thread routing via threadId parameter | LOW           |
+| `extensions/mattermost/src/channel.test.ts` | Thread routing tests                  | MEDIUM        |
+
+### Other
+
+| File                                   | Customization                                  | Conflict Risk |
+| -------------------------------------- | ---------------------------------------------- | ------------- |
+| `src/agents/openclaw-tools.ts`         | messageTo/agentThreadId in plugin tool context | MEDIUM        |
+| `src/gateway/server-methods/send.ts`   | threadId handling for sub-agent routing        | MEDIUM        |
+| `src/gateway/protocol/schema/agent.ts` | Merged threadId doc comment                    | LOW           |
+| `Dockerfile.sandbox`                   | rtk bind-mount comment                         | LOW           |
+
+**Recurring HIGH conflict risk files** (flag every merge):
+
+- `src/agents/subagent-announce.ts` — upstream refactors heavily each release
+- `package.json` / `pnpm-lock.yaml` — always conflicts on deps/version
 
 **Untracked fork files (not committed, copy separately):**
 
