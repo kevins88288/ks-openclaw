@@ -808,6 +808,7 @@ export function loadOpenClawPlugins(options: PluginLoadOptions = {}): PluginRegi
     if (cached) {
       if (shouldActivate) {
         activatePluginRegistry(cached, cacheKey);
+        initializeGlobalHookRunner(cached);
       }
       return cached;
     }
