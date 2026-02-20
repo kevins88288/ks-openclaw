@@ -172,6 +172,8 @@ export function createOpenClawTools(options?: {
       sessionKey: options?.agentSessionKey,
       messageChannel: options?.agentChannel,
       agentAccountId: options?.agentAccountId,
+      messageTo: options?.agentTo,
+      agentThreadId: options?.agentThreadId,
       sandboxed: options?.sandboxed,
     },
     existingToolNames: new Set(tools.map((tool) => tool.name)),
