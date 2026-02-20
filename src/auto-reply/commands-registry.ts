@@ -364,8 +364,32 @@ export function resolveCommandArgMenu(params: {
 
 export function normalizeCommandBody(raw: string, options?: CommandNormalizeOptions): string {
   const trimmed = raw.trim();
-  if (!trimmed.startsWith("/")) {
+  if (!trimmed.startsWith("/") && !trimmed.startsWith("!")) {
     return trimmed;
+  }
+
+  // For !bang commands, do a direct alias lookup (no colon/mention normalization needed)
+  if (trimmed.startsWith("!")) {
+    const lowered = trimmed.toLowerCase();
+    const textAliasMap = getTextAliasMap();
+    const exact = textAliasMap.get(lowered);
+    if (exact) {
+      return exact.canonical;
+    }
+    const tokenMatch = trimmed.match(/^(![^\s]+)(?:\s+([\s\S]+))?$/);
+    if (!tokenMatch) {
+      return trimmed;
+    }
+    const [, token, rest] = tokenMatch;
+    const tokenSpec = textAliasMap.get(token.toLowerCase());
+    if (!tokenSpec) {
+      return trimmed;
+    }
+    if (rest && !tokenSpec.acceptsArgs) {
+      return trimmed;
+    }
+    const normalizedRest = rest?.trimStart();
+    return normalizedRest ? `${tokenSpec.canonical} ${normalizedRest}` : tokenSpec.canonical;
   }
 
   const newline = trimmed.indexOf("\n");
