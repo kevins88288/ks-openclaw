@@ -23,6 +23,7 @@ import { getMattermostRuntime } from "../runtime.js";
 import { resolveMattermostAccount } from "./accounts.js";
 import {
   createMattermostClient,
+  createMattermostWorkstream,
   fetchMattermostChannel,
   fetchMattermostMe,
   fetchMattermostUser,
@@ -112,6 +113,9 @@ function channelKind(channelType?: string | null): ChatType {
   }
   if (normalized === "G") {
     return "group";
+  }
+  if (normalized === "W") {
+    return "workstream";
   }
   return "channel";
 }
@@ -503,12 +507,25 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
 
     const baseSessionKey = route.sessionKey;
     const threadRootId = post.root_id?.trim() || undefined;
-    const threadKeys = resolveThreadSessionKeys({
-      baseSessionKey,
-      threadId: threadRootId,
-      parentSessionKey: threadRootId ? baseSessionKey : undefined,
-    });
-    const sessionKey = threadKeys.sessionKey;
+
+    // Workstreams use channel-based session keys (not thread-based)
+    let sessionKey: string;
+    let parentSessionKey: string | undefined;
+    if (channelType?.trim().toUpperCase() === "W") {
+      sessionKey = `mattermost:${channelId}`;
+      if (channelInfo?.parent_channel_id) {
+        parentSessionKey = `mattermost:${channelInfo.parent_channel_id}`;
+      }
+    } else {
+      const threadKeys = resolveThreadSessionKeys({
+        baseSessionKey,
+        threadId: threadRootId,
+        parentSessionKey: threadRootId ? baseSessionKey : undefined,
+      });
+      sessionKey = threadKeys.sessionKey;
+      parentSessionKey = threadKeys.parentSessionKey;
+    }
+
     const historyKey = kind === "direct" ? null : sessionKey;
 
     const mentionRegexes = core.channel.mentions.buildMentionRegexes(cfg, route.agentId);
@@ -580,6 +597,29 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
       return;
     }
 
+    // Auto-workstream creation: create workstream for new conversations when enabled
+    let createdWorkstreamId: string | undefined;
+    if (account.config.autoWorkstream && channelType?.trim().toUpperCase() !== "W") {
+      try {
+        const subject = bodyText.split("\n")[0].slice(0, 64);
+        const workstream = await createMattermostWorkstream(client, {
+          parentChannelId: channelId,
+          displayName: subject || "New Conversation",
+        });
+        createdWorkstreamId = workstream.id;
+        // Update session key to use the workstream
+        sessionKey = `mattermost:${createdWorkstreamId}`;
+        parentSessionKey = `mattermost:${channelId}`;
+        logVerboseMessage(
+          `mattermost: auto-created workstream ${createdWorkstreamId} in channel ${channelId}`,
+        );
+      } catch (err) {
+        logVerboseMessage(
+          `mattermost: autoWorkstream creation failed for ${channelId}: ${String(err)}`,
+        );
+      }
+    }
+
     core.channel.activity.record({
       channel: "mattermost",
       accountId: account.accountId,
@@ -635,7 +675,9 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
       });
     }
 
-    const to = kind === "direct" ? `user:${senderId}` : `channel:${channelId}`;
+    // Redirect delivery to workstream if one was auto-created
+    const deliveryChannelId = createdWorkstreamId ?? channelId;
+    const to = kind === "direct" ? `user:${senderId}` : `channel:${deliveryChannelId}`;
     const mediaPayload = buildAgentMediaPayload(mediaList);
     const inboundHistory =
       historyKey && historyLimit > 0
@@ -659,7 +701,7 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
             : `mattermost:channel:${channelId}`,
       To: to,
       SessionKey: sessionKey,
-      ParentSessionKey: threadKeys.parentSessionKey,
+      ParentSessionKey: parentSessionKey,
       AccountId: route.accountId,
       ChatType: chatType,
       ConversationLabel: fromLabel,

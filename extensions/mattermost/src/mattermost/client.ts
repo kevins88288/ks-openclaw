@@ -19,6 +19,7 @@ export type MattermostChannel = {
   display_name?: string | null;
   type?: string | null;
   team_id?: string | null;
+  parent_channel_id?: string | null;
 };
 
 export type MattermostPost = {
@@ -227,4 +228,28 @@ export async function uploadMattermostFile(
     throw new Error("Mattermost file upload failed");
   }
   return info;
+}
+
+export async function createMattermostWorkstream(
+  client: MattermostClient,
+  params: { parentChannelId: string; displayName: string },
+): Promise<MattermostChannel> {
+  const response = await client.request<MattermostChannel>(
+    `/channels/${params.parentChannelId}/workstreams`,
+    {
+      method: "POST",
+      body: JSON.stringify({ display_name: params.displayName }),
+    },
+  );
+  return response;
+}
+
+export async function fetchMattermostWorkstreams(
+  client: MattermostClient,
+  parentChannelId: string,
+): Promise<MattermostChannel[]> {
+  const response = await client.request<MattermostChannel[]>(
+    `/channels/${parentChannelId}/workstreams`,
+  );
+  return response;
 }

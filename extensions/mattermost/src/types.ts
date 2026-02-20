@@ -49,6 +49,8 @@ export type MattermostAccountConfig = {
     /** Enable message reaction actions. Default: true. */
     reactions?: boolean;
   };
+  /** Auto-create workstreams for new conversations in channels. */
+  autoWorkstream?: boolean;
 };
 
 export type MattermostConfig = {
