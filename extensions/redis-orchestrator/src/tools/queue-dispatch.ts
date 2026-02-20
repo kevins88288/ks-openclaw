@@ -552,6 +552,8 @@ export function createQueueDispatchTool(
       const dispatcherOrigin = normalizeDeliveryContext({
         channel: ctx.messageChannel,
         accountId: ctx.agentAccountId,
+        to: ctx.messageTo,
+        threadId: ctx.agentThreadId,
       });
 
       // Create BullMQ job via circuit breaker, with sessions_spawn fallback

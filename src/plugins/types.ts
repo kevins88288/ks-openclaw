@@ -62,6 +62,8 @@ export type OpenClawPluginToolContext = {
   sessionKey?: string;
   messageChannel?: string;
   agentAccountId?: string;
+  messageTo?: string;
+  agentThreadId?: string | number;
   sandboxed?: boolean;
 };
 
@@ -555,7 +557,7 @@ export type PluginHookGatewayContext = {
 
 // reaction_add context
 export type PluginHookReactionContext = {
-  channelType: "discord" | "slack" | "telegram" | string;
+  channelType: string;
   accountId?: string;
   guildId?: string;
 };
