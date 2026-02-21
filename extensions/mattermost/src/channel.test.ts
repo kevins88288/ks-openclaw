@@ -1,7 +1,21 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
 import { createReplyPrefixOptions } from "openclaw/plugin-sdk";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mattermostPlugin } from "./channel.js";
+import { resetMattermostReactionBotUserCacheForTests } from "./mattermost/reactions.js";
+import {
+  createMattermostReactionFetchMock,
+  createMattermostTestConfig,
+  withMockedGlobalFetch,
+} from "./mattermost/reactions.test-helpers.js";
+import { sendMessageMattermost } from "./mattermost/send.js";
+
+vi.mock("./mattermost/send.js", () => ({
+  sendMessageMattermost: vi.fn(async () => ({
+    messageId: "m1",
+    channelId: "ch-1",
+  })),
+}));
 
 describe("mattermostPlugin", () => {
   describe("messaging", () => {
@@ -44,6 +58,10 @@ describe("mattermostPlugin", () => {
   });
 
   describe("messageActions", () => {
+    beforeEach(() => {
+      resetMattermostReactionBotUserCacheForTests();
+    });
+
     it("exposes react when mattermost is configured", () => {
       const cfg: OpenClawConfig = {
         channels: {
@@ -142,41 +160,14 @@ describe("mattermostPlugin", () => {
     });
 
     it("handles react by calling Mattermost reactions API", async () => {
-      const cfg: OpenClawConfig = {
-        channels: {
-          mattermost: {
-            enabled: true,
-            botToken: "test-token",
-            baseUrl: "https://chat.example.com",
-          },
-        },
-      };
-
-      const fetchImpl = vi.fn(async (url: any, init?: any) => {
-        if (String(url).endsWith("/api/v4/users/me")) {
-          return new Response(JSON.stringify({ id: "BOT123" }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          });
-        }
-        if (String(url).endsWith("/api/v4/reactions")) {
-          expect(init?.method).toBe("POST");
-          expect(JSON.parse(init?.body)).toEqual({
-            user_id: "BOT123",
-            post_id: "POST1",
-            emoji_name: "thumbsup",
-          });
-          return new Response(JSON.stringify({ ok: true }), {
-            status: 201,
-            headers: { "content-type": "application/json" },
-          });
-        }
-        throw new Error(`unexpected url: ${url}`);
+      const cfg = createMattermostTestConfig();
+      const fetchImpl = createMattermostReactionFetchMock({
+        mode: "add",
+        postId: "POST1",
+        emojiName: "thumbsup",
       });
 
-      const prevFetch = globalThis.fetch;
-      (globalThis as any).fetch = fetchImpl;
-      try {
+      const result = await withMockedGlobalFetch(fetchImpl as unknown as typeof fetch, async () => {
         const result = await mattermostPlugin.actions?.handleAction?.({
           channel: "mattermost",
           action: "react",
@@ -185,51 +176,22 @@ describe("mattermostPlugin", () => {
           accountId: "default",
         } as any);
 
-        expect(result?.content).toEqual([
-          { type: "text", text: "Reacted with :thumbsup: on POST1" },
-        ]);
-        expect(result?.details).toEqual({});
-      } finally {
-        (globalThis as any).fetch = prevFetch;
-      }
+        return result;
+      });
+
+      expect(result?.content).toEqual([{ type: "text", text: "Reacted with :thumbsup: on POST1" }]);
+      expect(result?.details).toEqual({});
     });
 
     it("only treats boolean remove flag as removal", async () => {
-      const cfg: OpenClawConfig = {
-        channels: {
-          mattermost: {
-            enabled: true,
-            botToken: "test-token",
-            baseUrl: "https://chat.example.com",
-          },
-        },
-      };
-
-      const fetchImpl = vi.fn(async (url: any, init?: any) => {
-        if (String(url).endsWith("/api/v4/users/me")) {
-          return new Response(JSON.stringify({ id: "BOT123" }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          });
-        }
-        if (String(url).endsWith("/api/v4/reactions")) {
-          expect(init?.method).toBe("POST");
-          expect(JSON.parse(init?.body)).toEqual({
-            user_id: "BOT123",
-            post_id: "POST1",
-            emoji_name: "thumbsup",
-          });
-          return new Response(JSON.stringify({ ok: true }), {
-            status: 201,
-            headers: { "content-type": "application/json" },
-          });
-        }
-        throw new Error(`unexpected url: ${url}`);
+      const cfg = createMattermostTestConfig();
+      const fetchImpl = createMattermostReactionFetchMock({
+        mode: "add",
+        postId: "POST1",
+        emojiName: "thumbsup",
       });
 
-      const prevFetch = globalThis.fetch;
-      (globalThis as any).fetch = fetchImpl;
-      try {
+      const result = await withMockedGlobalFetch(fetchImpl as unknown as typeof fetch, async () => {
         const result = await mattermostPlugin.actions?.handleAction?.({
           channel: "mattermost",
           action: "react",
@@ -238,12 +200,94 @@ describe("mattermostPlugin", () => {
           accountId: "default",
         } as any);
 
-        expect(result?.content).toEqual([
-          { type: "text", text: "Reacted with :thumbsup: on POST1" },
-        ]);
-      } finally {
-        (globalThis as any).fetch = prevFetch;
-      }
+        return result;
+      });
+
+      expect(result?.content).toEqual([{ type: "text", text: "Reacted with :thumbsup: on POST1" }]);
+    });
+  });
+
+  describe("outbound threadId routing", () => {
+    const mockSend = sendMessageMattermost as ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      mockSend.mockClear();
+    });
+
+    it("uses threadId as replyToId when replyToId is absent", async () => {
+      await mattermostPlugin.outbound!.sendText!({
+        cfg: {} as OpenClawConfig,
+        to: "channel:town-square",
+        text: "sub-agent result",
+        threadId: "root-post-123",
+      } as any);
+
+      expect(mockSend).toHaveBeenCalledWith(
+        "channel:town-square",
+        "sub-agent result",
+        expect.objectContaining({ replyToId: "root-post-123" }),
+      );
+    });
+
+    it("prefers replyToId over threadId when both present", async () => {
+      await mattermostPlugin.outbound!.sendText!({
+        cfg: {} as OpenClawConfig,
+        to: "channel:town-square",
+        text: "reply",
+        replyToId: "specific-post-456",
+        threadId: "root-post-123",
+      } as any);
+
+      expect(mockSend).toHaveBeenCalledWith(
+        "channel:town-square",
+        "reply",
+        expect.objectContaining({ replyToId: "specific-post-456" }),
+      );
+    });
+
+    it("does not set replyToId when neither replyToId nor threadId present", async () => {
+      await mattermostPlugin.outbound!.sendText!({
+        cfg: {} as OpenClawConfig,
+        to: "channel:town-square",
+        text: "top-level message",
+      } as any);
+
+      expect(mockSend).toHaveBeenCalledWith(
+        "channel:town-square",
+        "top-level message",
+        expect.objectContaining({ replyToId: undefined }),
+      );
+    });
+
+    it("uses threadId for sendMedia when replyToId is absent", async () => {
+      await mattermostPlugin.outbound!.sendMedia!({
+        cfg: {} as OpenClawConfig,
+        to: "channel:town-square",
+        text: "media in thread",
+        mediaUrl: "https://example.com/image.png",
+        threadId: "root-post-789",
+      } as any);
+
+      expect(mockSend).toHaveBeenCalledWith(
+        "channel:town-square",
+        "media in thread",
+        expect.objectContaining({ replyToId: "root-post-789" }),
+      );
+    });
+
+    it("coerces numeric threadId to string", async () => {
+      await mattermostPlugin.outbound!.sendText!({
+        cfg: {} as OpenClawConfig,
+        to: "channel:town-square",
+        text: "numeric thread",
+        threadId: 42,
+      } as any);
+
+      expect(mockSend).toHaveBeenCalledWith(
+        "channel:town-square",
+        "numeric thread",
+        expect.objectContaining({ replyToId: "42" }),
+      );
     });
   });
 

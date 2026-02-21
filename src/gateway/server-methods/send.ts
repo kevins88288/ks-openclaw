@@ -64,6 +64,7 @@ export const sendHandlers: GatewayRequestHandlers = {
       gifPlayback?: boolean;
       channel?: string;
       accountId?: string;
+      threadId?: string;
       sessionKey?: string;
       idempotencyKey: string;
     };
@@ -193,6 +194,10 @@ export const sendHandlers: GatewayRequestHandlers = {
             route: derivedRoute,
           });
         }
+        const threadId =
+          typeof request.threadId === "string" && request.threadId.trim().length > 0
+            ? request.threadId.trim()
+            : undefined;
         const results = await deliverOutboundPayloads({
           cfg,
           channel: outboundChannel,
@@ -203,6 +208,7 @@ export const sendHandlers: GatewayRequestHandlers = {
             ? resolveSessionAgentId({ sessionKey: providedSessionKey, config: cfg })
             : derivedAgentId,
           gifPlayback: request.gifPlayback,
+          threadId,
           deps: outboundDeps,
           mirror: providedSessionKey
             ? {

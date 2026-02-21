@@ -266,18 +266,20 @@ export const mattermostPlugin: ChannelPlugin<ResolvedMattermostAccount> = {
       }
       return { ok: true, to: trimmed };
     },
-    sendText: async ({ to, text, accountId, replyToId }) => {
+    sendText: async ({ to, text, accountId, replyToId, threadId }) => {
+      const effectiveReplyToId = replyToId ?? (threadId ? String(threadId) : undefined);
       const result = await sendMessageMattermost(to, text, {
         accountId: accountId ?? undefined,
-        replyToId: replyToId ?? undefined,
+        replyToId: effectiveReplyToId,
       });
       return { channel: "mattermost", ...result };
     },
-    sendMedia: async ({ to, text, mediaUrl, accountId, replyToId }) => {
+    sendMedia: async ({ to, text, mediaUrl, accountId, replyToId, threadId }) => {
+      const effectiveReplyToId = replyToId ?? (threadId ? String(threadId) : undefined);
       const result = await sendMessageMattermost(to, text, {
         accountId: accountId ?? undefined,
         mediaUrl,
-        replyToId: replyToId ?? undefined,
+        replyToId: effectiveReplyToId,
       });
       return { channel: "mattermost", ...result };
     },
