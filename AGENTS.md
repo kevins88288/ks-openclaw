@@ -142,6 +142,25 @@
 
 - Rebrand/migration issues or legacy config/service warnings: run `openclaw doctor` (see `docs/gateway/doctor.md`).
 
+### Post-Upgrade: Device Pairing Scope Mismatch
+
+After upgrading OpenClaw (especially versions with security hardening), subagent spawns and `queue_dispatch` may fail with `gateway closed (1008): pairing required`. This happens when:
+
+1. The local device was paired with an older scope set (e.g., `admin + approvals + pairing`)
+2. The new version's `resolveLeastPrivilegeOperatorScopesForMethod()` requests scopes not in the paired set (e.g., `operator.write`)
+3. The gateway treats this as a scope-upgrade, which requires explicit approval (not auto-approved even for loopback)
+
+**Fix:** Run `openclaw devices list` — if there's a pending request with `repair` flag, approve it:
+
+```bash
+openclaw devices list          # find the pending request ID
+openclaw devices approve <requestId>
+```
+
+**Post-upgrade checklist item:** After any OpenClaw upgrade, verify subagent spawns work. If they fail with `pairing required`, check for pending device re-pair requests and approve them.
+
+**Root cause reference:** Commit `0bda0202fd` changed silent auto-approval from `silent: isLocalClient` to `silent: isLocalClient && reason === "not-paired"`, meaning scope upgrades on loopback require manual approval.
+
 ## Agent-Specific Notes
 
 - Vocabulary: "makeup" = "mac app".
@@ -192,6 +211,31 @@
   - launchd PATH is minimal; ensure the app’s launch agent PATH includes standard system paths plus your pnpm bin (typically `$HOME/Library/pnpm`) so `pnpm`/`openclaw` binaries resolve when invoked via `openclaw-mac`.
 - For manual `openclaw message send` messages that include `!`, use the heredoc pattern noted below to avoid the Bash tool’s escaping.
 - Release guardrails: do not change version numbers without operator’s explicit consent; always ask permission before running any npm publish/release step.
+
+---
+
+## Local Patches (Alfred Deployment)
+
+> These patches are maintained in `~/workspace/openclaw/patches/` and must be re-applied after every upstream pull. See `UPGRADE-LOG.md` for history of upgrades and patch outcomes.
+
+| Patch                            | File                            | What it fixes                                                                                 |
+| -------------------------------- | ------------------------------- | --------------------------------------------------------------------------------------------- |
+| `openclaw-hook-runner-fix.patch` | `src/plugins/loader.ts`         | Cache-hit path skips `initializeGlobalHookRunner()`, breaking all hooks after SIGUSR1 restart |
+| `openclaw-gcp-adc.patch`         | `src/config/zod-schema.core.ts` | Adds `gcp-adc` as valid auth type for GCP Application Default Credentials                     |
+
+**Re-apply command:**
+
+```bash
+git apply ~/workspace/openclaw/patches/openclaw-hook-runner-fix.patch
+git apply ~/workspace/openclaw/patches/openclaw-gcp-adc.patch
+pnpm build
+```
+
+**If a patch fails:** Check `~/workspace/openclaw/patches/README.md` for manual fallback instructions.
+
+**Deployment config:** `~/workspace/openclaw/` — see that directory’s `CLAUDE.md` for Alfred identity, memory system, and channel config.
+
+---
 
 ## NPM + 1Password (publish/verify)
 

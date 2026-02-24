@@ -325,7 +325,7 @@ function validateConfigObjectWithPluginsBase(
   if (entries && isRecord(entries)) {
     for (const pluginId of Object.keys(entries)) {
       if (!knownIds.has(pluginId)) {
-        issues.push({
+        warnings.push({
           path: `plugins.entries.${pluginId}`,
           message: `plugin not found: ${pluginId}`,
         });
@@ -339,7 +339,7 @@ function validateConfigObjectWithPluginsBase(
       continue;
     }
     if (!knownIds.has(pluginId)) {
-      issues.push({
+      warnings.push({
         path: "plugins.allow",
         message: `plugin not found: ${pluginId}`,
       });
@@ -352,7 +352,7 @@ function validateConfigObjectWithPluginsBase(
       continue;
     }
     if (!knownIds.has(pluginId)) {
-      issues.push({
+      warnings.push({
         path: "plugins.deny",
         message: `plugin not found: ${pluginId}`,
       });
@@ -361,7 +361,7 @@ function validateConfigObjectWithPluginsBase(
 
   const memorySlot = normalizedPlugins.slots.memory;
   if (typeof memorySlot === "string" && memorySlot.trim() && !knownIds.has(memorySlot)) {
-    issues.push({
+    warnings.push({
       path: "plugins.slots.memory",
       message: `plugin not found: ${memorySlot}`,
     });

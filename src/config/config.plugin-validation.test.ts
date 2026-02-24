@@ -65,22 +65,22 @@ describe("config plugin validation", () => {
     }
   });
 
-  it("rejects missing plugin ids in entries", async () => {
+  it("warns (not rejects) for missing plugin ids in entries", async () => {
     const home = await createCaseHome();
     const res = validateInHome(home, {
       agents: { list: [{ id: "pi" }] },
       plugins: { enabled: false, entries: { "missing-plugin": { enabled: true } } },
     });
-    expect(res.ok).toBe(false);
-    if (!res.ok) {
-      expect(res.issues).toContainEqual({
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.warnings).toContainEqual({
         path: "plugins.entries.missing-plugin",
         message: "plugin not found: missing-plugin",
       });
     }
   });
 
-  it("rejects missing plugin ids in allow/deny/slots", async () => {
+  it("warns (not rejects) for missing plugin ids in allow/deny/slots", async () => {
     const home = await createCaseHome();
     const res = validateInHome(home, {
       agents: { list: [{ id: "pi" }] },
@@ -91,9 +91,9 @@ describe("config plugin validation", () => {
         slots: { memory: "missing-slot" },
       },
     });
-    expect(res.ok).toBe(false);
-    if (!res.ok) {
-      expect(res.issues).toEqual(
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.warnings).toEqual(
         expect.arrayContaining([
           { path: "plugins.allow", message: "plugin not found: missing-allow" },
           { path: "plugins.deny", message: "plugin not found: missing-deny" },
