@@ -32,7 +32,11 @@ import {
   type HistoryEntry,
 } from "openclaw/plugin-sdk/mattermost";
 import { getMattermostRuntime } from "../runtime.js";
-import { resolveMattermostAccount, resolveMattermostReplyToMode } from "./accounts.js";
+import {
+  MATTERMOST_DEFAULT_CHUNK_LIMIT,
+  resolveMattermostAccount,
+  resolveMattermostReplyToMode,
+} from "./accounts.js";
 import {
   createMattermostClient,
   fetchMattermostChannel,
@@ -1708,7 +1712,7 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
       "mattermost",
       account.accountId,
       {
-        fallbackLimit: account.textChunkLimit ?? 4000,
+        fallbackLimit: account.textChunkLimit ?? MATTERMOST_DEFAULT_CHUNK_LIMIT,
       },
     );
     const tableMode = core.channel.text.resolveMarkdownTableMode({
