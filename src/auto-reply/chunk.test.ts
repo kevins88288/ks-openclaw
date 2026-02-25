@@ -140,6 +140,26 @@ describe("resolveTextChunkLimit", () => {
     expect(resolveTextChunkLimit(cfg, "slack")).toBe(222);
     expect(resolveTextChunkLimit(cfg, "telegram")).toBe(4000);
   });
+
+  it("mattermost fallback is 50000 not 4000", () => {
+    // When monitor.ts passes fallbackLimit: MATTERMOST_DEFAULT_CHUNK_LIMIT (50000),
+    // resolveTextChunkLimit must return 50000 when no config override exists.
+    expect(
+      resolveTextChunkLimit(undefined, "mattermost", undefined, { fallbackLimit: 50000 }),
+    ).toBe(50000);
+    // Explicitly passing 4000 (the old bug value) must return 4000, confirming
+    // the distinction — the bug was the wrong constant being passed by monitor.ts.
+    expect(resolveTextChunkLimit(undefined, "mattermost", undefined, { fallbackLimit: 4000 })).toBe(
+      4000,
+    );
+  });
+
+  it("mattermost config override wins over the 50000 fallback", () => {
+    const cfg = { channels: { mattermost: { textChunkLimit: 12345 } } };
+    expect(resolveTextChunkLimit(cfg, "mattermost", undefined, { fallbackLimit: 50000 })).toBe(
+      12345,
+    );
+  });
 });
 
 describe("chunkMarkdownText", () => {
