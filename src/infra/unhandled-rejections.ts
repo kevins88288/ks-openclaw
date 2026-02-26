@@ -1,4 +1,5 @@
 import process from "node:process";
+import { isFailoverError } from "../agents/failover-error.js";
 import { extractErrorCode, formatUncaughtError } from "./errors.js";
 
 type UnhandledRejectionHandler = (reason: unknown) => boolean;
@@ -241,6 +242,16 @@ export function installUnhandledRejectionHandler(): void {
     // Log it but don't crash - these are expected during graceful shutdown
     if (isAbortError(reason)) {
       console.warn("[openclaw] Suppressed AbortError:", formatUncaughtError(reason));
+      return;
+    }
+
+    // FailoverError wraps provider-level errors (auth, rate limit, billing, etc.)
+    // that are already handled by the failover/retry layer — never crash on these.
+    if (isFailoverError(reason)) {
+      console.warn(
+        "[openclaw] Non-fatal provider error (continuing):",
+        formatUncaughtError(reason),
+      );
       return;
     }
 

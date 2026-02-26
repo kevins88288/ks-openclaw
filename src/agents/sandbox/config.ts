@@ -95,6 +95,12 @@ export function resolveSandboxDockerConfig(params: {
     dns: agentDocker?.dns ?? globalDocker?.dns,
     extraHosts: agentDocker?.extraHosts ?? globalDocker?.extraHosts,
     binds: binds.length ? binds : undefined,
+    dangerouslyAllowExternalBindSources:
+      agentDocker?.dangerouslyAllowExternalBindSources ??
+      globalDocker?.dangerouslyAllowExternalBindSources,
+    dangerouslyAllowReservedContainerTargets:
+      agentDocker?.dangerouslyAllowReservedContainerTargets ??
+      globalDocker?.dangerouslyAllowReservedContainerTargets,
   };
 }
 
