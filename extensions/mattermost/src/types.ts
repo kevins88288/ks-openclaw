@@ -39,7 +39,7 @@ export type MattermostAccountConfig = {
   groupAllowFrom?: Array<string | number>;
   /** Group message policy (allowlist/open/disabled). */
   groupPolicy?: GroupPolicy;
-  /** Outbound text chunk size (chars). Default: 50000 (Mattermost server MaxPostSize limit). */
+  /** Outbound text chunk size (chars). Default: 16000 (Mattermost server MaxPostSize=16383 with margin). */
   textChunkLimit?: number;
   /** Chunking mode: "length" (default) splits by size; "newline" splits on every newline. */
   chunkMode?: "length" | "newline";
