@@ -297,7 +297,7 @@ vi.mock("../daemon/service.js", () => ({
     readRuntime: async () => ({ status: "running", pid: 1234 }),
     readCommand: async () => ({
       programArguments: ["node", "dist/entry.js", "gateway"],
-      sourcePath: "/tmp/Library/LaunchAgents/bot.molt.gateway.plist",
+      sourcePath: "/tmp/Library/LaunchAgents/ai.openclaw.gateway.plist",
     }),
   }),
 }));
@@ -310,7 +310,7 @@ vi.mock("../daemon/node-service.js", () => ({
     readRuntime: async () => ({ status: "running", pid: 4321 }),
     readCommand: async () => ({
       programArguments: ["node", "dist/entry.js", "node-host"],
-      sourcePath: "/tmp/Library/LaunchAgents/bot.molt.node.plist",
+      sourcePath: "/tmp/Library/LaunchAgents/ai.openclaw.node.plist",
     }),
   }),
 }));
@@ -388,6 +388,7 @@ describe("statusCommand", () => {
     expect(logs.some((l: string) => l.includes("Memory"))).toBe(true);
     expect(logs.some((l: string) => l.includes("Channels"))).toBe(true);
     expect(logs.some((l: string) => l.includes("WhatsApp"))).toBe(true);
+    expect(logs.some((l: string) => l.includes("bootstrap files"))).toBe(true);
     expect(logs.some((l: string) => l.includes("Sessions"))).toBe(true);
     expect(logs.some((l: string) => l.includes("+1000"))).toBe(true);
     expect(logs.some((l: string) => l.includes("50%"))).toBe(true);

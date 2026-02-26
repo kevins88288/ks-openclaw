@@ -65,7 +65,7 @@ describe("config plugin validation", () => {
     }
   });
 
-  it("warns (not rejects) for missing plugin ids in entries", async () => {
+  it("warns for missing plugin ids in entries instead of failing validation", async () => {
     const home = await createCaseHome();
     const res = validateInHome(home, {
       agents: { list: [{ id: "pi" }] },
@@ -75,12 +75,13 @@ describe("config plugin validation", () => {
     if (res.ok) {
       expect(res.warnings).toContainEqual({
         path: "plugins.entries.missing-plugin",
-        message: "plugin not found: missing-plugin",
+        message:
+          "plugin not found: missing-plugin (stale config entry ignored; remove it from plugins config)",
       });
     }
   });
 
-  it("warns (not rejects) for missing plugin ids in allow/deny/slots", async () => {
+  it("rejects missing plugin ids in allow/deny/slots", async () => {
     const home = await createCaseHome();
     const res = validateInHome(home, {
       agents: { list: [{ id: "pi" }] },
@@ -91,13 +92,55 @@ describe("config plugin validation", () => {
         slots: { memory: "missing-slot" },
       },
     });
-    expect(res.ok).toBe(true);
-    if (res.ok) {
-      expect(res.warnings).toEqual(
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.issues).toEqual(
         expect.arrayContaining([
           { path: "plugins.allow", message: "plugin not found: missing-allow" },
           { path: "plugins.deny", message: "plugin not found: missing-deny" },
           { path: "plugins.slots.memory", message: "plugin not found: missing-slot" },
+        ]),
+      );
+    }
+  });
+
+  it("warns for removed legacy plugin ids instead of failing validation", async () => {
+    const home = await createCaseHome();
+    const removedId = "google-antigravity-auth";
+    const res = validateInHome(home, {
+      agents: { list: [{ id: "pi" }] },
+      plugins: {
+        enabled: false,
+        entries: { [removedId]: { enabled: true } },
+        allow: [removedId],
+        deny: [removedId],
+        slots: { memory: removedId },
+      },
+    });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.warnings).toEqual(
+        expect.arrayContaining([
+          {
+            path: `plugins.entries.${removedId}`,
+            message:
+              "plugin removed: google-antigravity-auth (stale config entry ignored; remove it from plugins config)",
+          },
+          {
+            path: "plugins.allow",
+            message:
+              "plugin removed: google-antigravity-auth (stale config entry ignored; remove it from plugins config)",
+          },
+          {
+            path: "plugins.deny",
+            message:
+              "plugin removed: google-antigravity-auth (stale config entry ignored; remove it from plugins config)",
+          },
+          {
+            path: "plugins.slots.memory",
+            message:
+              "plugin removed: google-antigravity-auth (stale config entry ignored; remove it from plugins config)",
+          },
         ]),
       );
     }
@@ -190,6 +233,34 @@ describe("config plugin validation", () => {
         path: "agents.defaults.heartbeat.target",
         message: "unknown heartbeat target: not-a-channel",
       });
+    }
+  });
+
+  it("accepts heartbeat directPolicy enum values", async () => {
+    const home = await createCaseHome();
+    const res = validateInHome(home, {
+      agents: {
+        defaults: { heartbeat: { target: "last", directPolicy: "block" } },
+        list: [{ id: "pi", heartbeat: { directPolicy: "allow" } }],
+      },
+    });
+    expect(res.ok).toBe(true);
+  });
+
+  it("rejects invalid heartbeat directPolicy values", async () => {
+    const home = await createCaseHome();
+    const res = validateInHome(home, {
+      agents: {
+        defaults: { heartbeat: { directPolicy: "maybe" } },
+        list: [{ id: "pi" }],
+      },
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      const hasIssue = res.issues.some(
+        (issue) => issue.path === "agents.defaults.heartbeat.directPolicy",
+      );
+      expect(hasIssue).toBe(true);
     }
   });
 });

@@ -1,5 +1,5 @@
 import { resolveQueueSettings } from "../auto-reply/reply/queue.js";
-import { SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
+import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
 import { DEFAULT_SUBAGENT_MAX_SPAWN_DEPTH } from "../config/agent-limits.js";
 import { loadConfig } from "../config/config.js";
 import {
@@ -21,7 +21,7 @@ import {
   mergeDeliveryContext,
   normalizeDeliveryContext,
 } from "../utils/delivery-context.js";
-import { isDeliverableMessageChannel } from "../utils/message-channel.js";
+import { isDeliverableMessageChannel, isInternalMessageChannel } from "../utils/message-channel.js";
 import {
   buildAnnounceIdFromChildRun,
   buildAnnounceIdempotencyKey,
@@ -32,29 +32,29 @@ import {
   queueEmbeddedPiMessage,
   waitForEmbeddedPiRunEnd,
 } from "./pi-embedded.js";
+import {
+  runSubagentAnnounceDispatch,
+  type SubagentAnnounceDeliveryResult,
+} from "./subagent-announce-dispatch.js";
 import { type AnnounceQueueItem, enqueueAnnounce } from "./subagent-announce-queue.js";
 import { getSubagentDepthFromSessionStore } from "./subagent-depth.js";
 import type { SpawnSubagentMode } from "./subagent-spawn.js";
 import { readLatestAssistantReply } from "./tools/agent-step.js";
 import { sanitizeTextContent, extractAssistantText } from "./tools/sessions-helpers.js";
+import { isAnnounceSkip } from "./tools/sessions-send-helpers.js";
 
 const FAST_TEST_MODE = process.env.OPENCLAW_TEST_FAST === "1";
 const FAST_TEST_RETRY_INTERVAL_MS = 8;
 const FAST_TEST_REPLY_CHANGE_WAIT_MS = 20;
 const DEFAULT_SUBAGENT_ANNOUNCE_TIMEOUT_MS = 60_000;
 const MAX_TIMER_SAFE_TIMEOUT_MS = 2_147_000_000;
+const DIRECT_ANNOUNCE_TRANSIENT_RETRY_DELAYS_MS = FAST_TEST_MODE
+  ? ([8, 16, 32] as const)
+  : ([5_000, 10_000, 20_000] as const);
 
 type ToolResultMessage = {
   role?: unknown;
   content?: unknown;
-};
-
-type SubagentDeliveryPath = "queued" | "steered" | "direct" | "none";
-
-type SubagentAnnounceDeliveryResult = {
-  delivered: boolean;
-  path: SubagentDeliveryPath;
-  error?: string;
 };
 
 function resolveSubagentAnnounceTimeoutMs(cfg: ReturnType<typeof loadConfig>): number {
@@ -72,6 +72,9 @@ function buildCompletionDeliveryMessage(params: {
   outcome?: SubagentRunOutcome;
 }): string {
   const findingsText = params.findings.trim();
+  if (isAnnounceSkip(findingsText)) {
+    return "";
+  }
   const hasFindings = findingsText.length > 0 && findingsText !== "(no output)";
   const header = (() => {
     if (params.outcome?.status === "error") {
@@ -108,6 +111,92 @@ function summarizeDeliveryError(error: unknown): string {
     return JSON.stringify(error);
   } catch {
     return "error";
+  }
+}
+
+const TRANSIENT_ANNOUNCE_DELIVERY_ERROR_PATTERNS: readonly RegExp[] = [
+  /\berrorcode=unavailable\b/i,
+  /\bstatus\s*[:=]\s*"?unavailable\b/i,
+  /\bUNAVAILABLE\b/,
+  /no active .* listener/i,
+  /gateway not connected/i,
+  /gateway closed \(1006/i,
+  /gateway timeout/i,
+  /\b(econnreset|econnrefused|etimedout|enotfound|ehostunreach|network error)\b/i,
+];
+
+const PERMANENT_ANNOUNCE_DELIVERY_ERROR_PATTERNS: readonly RegExp[] = [
+  /unsupported channel/i,
+  /unknown channel/i,
+  /chat not found/i,
+  /user not found/i,
+  /bot was blocked by the user/i,
+  /forbidden: bot was kicked/i,
+  /recipient is not a valid/i,
+  /outbound not configured for channel/i,
+];
+
+function isTransientAnnounceDeliveryError(error: unknown): boolean {
+  const message = summarizeDeliveryError(error);
+  if (!message) {
+    return false;
+  }
+  if (PERMANENT_ANNOUNCE_DELIVERY_ERROR_PATTERNS.some((re) => re.test(message))) {
+    return false;
+  }
+  return TRANSIENT_ANNOUNCE_DELIVERY_ERROR_PATTERNS.some((re) => re.test(message));
+}
+
+async function waitForAnnounceRetryDelay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (ms <= 0) {
+    return;
+  }
+  if (!signal) {
+    await new Promise<void>((resolve) => setTimeout(resolve, ms));
+    return;
+  }
+  if (signal.aborted) {
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+async function runAnnounceDeliveryWithRetry<T>(params: {
+  operation: string;
+  signal?: AbortSignal;
+  run: () => Promise<T>;
+}): Promise<T> {
+  let retryIndex = 0;
+  for (;;) {
+    if (params.signal?.aborted) {
+      throw new Error("announce delivery aborted");
+    }
+    try {
+      return await params.run();
+    } catch (err) {
+      const delayMs = DIRECT_ANNOUNCE_TRANSIENT_RETRY_DELAYS_MS[retryIndex];
+      if (delayMs == null || !isTransientAnnounceDeliveryError(err) || params.signal?.aborted) {
+        throw err;
+      }
+      const nextAttempt = retryIndex + 2;
+      const maxAttempts = DIRECT_ANNOUNCE_TRANSIENT_RETRY_DELAYS_MS.length + 1;
+      defaultRuntime.log(
+        `[warn] Subagent announce ${params.operation} transient failure, retrying ${nextAttempt}/${maxAttempts} in ${Math.round(delayMs / 1000)}s: ${summarizeDeliveryError(err)}`,
+      );
+      retryIndex += 1;
+      await waitForAnnounceRetryDelay(delayMs, params.signal);
+    }
   }
 }
 
@@ -350,9 +439,12 @@ function resolveAnnounceOrigin(
 ): DeliveryContext | undefined {
   const normalizedRequester = normalizeDeliveryContext(requesterOrigin);
   const normalizedEntry = deliveryContextFromSession(entry);
-  if (normalizedRequester?.channel && !isDeliverableMessageChannel(normalizedRequester.channel)) {
-    // Ignore internal/non-deliverable channel hints (for example webchat)
-    // so a valid persisted route can still be used for outbound delivery.
+  if (normalizedRequester?.channel && isInternalMessageChannel(normalizedRequester.channel)) {
+    // Ignore internal channel hints (webchat) so a valid persisted route
+    // can still be used for outbound delivery. Non-standard channels that
+    // are not in the deliverable list should NOT be stripped here — doing
+    // so causes the session entry's stale lastChannel (often WhatsApp) to
+    // override the actual requester origin, leading to delivery failures.
     return mergeDeliveryContext(
       {
         accountId: normalizedRequester.accountId,
@@ -482,7 +574,6 @@ async function sendAnnounce(item: AnnounceQueueItem) {
   const announceTimeoutMs = resolveSubagentAnnounceTimeoutMs(cfg);
   const requesterDepth = getSubagentDepthFromSessionStore(item.sessionKey);
   const requesterIsSubagent = requesterDepth >= 1;
-  const suppressDelivery = requesterIsSubagent || item.suppressExternalDelivery === true;
   const origin = item.origin;
   const threadId =
     origin?.threadId != null && origin.threadId !== "" ? String(origin.threadId) : undefined;
@@ -500,11 +591,11 @@ async function sendAnnounce(item: AnnounceQueueItem) {
     params: {
       sessionKey: item.sessionKey,
       message: item.prompt,
-      channel: suppressDelivery ? undefined : origin?.channel,
-      accountId: suppressDelivery ? undefined : origin?.accountId,
-      to: suppressDelivery ? undefined : origin?.to,
-      threadId: suppressDelivery ? undefined : threadId,
-      deliver: !suppressDelivery,
+      channel: requesterIsSubagent ? undefined : origin?.channel,
+      accountId: requesterIsSubagent ? undefined : origin?.accountId,
+      to: requesterIsSubagent ? undefined : origin?.to,
+      threadId: requesterIsSubagent ? undefined : threadId,
+      deliver: !requesterIsSubagent,
       idempotencyKey,
     },
     timeoutMs: announceTimeoutMs,
@@ -557,7 +648,6 @@ async function maybeQueueSubagentAnnounce(params: {
   triggerMessage: string;
   summaryLine?: string;
   requesterOrigin?: DeliveryContext;
-  suppressExternalDelivery?: boolean;
   signal?: AbortSignal;
 }): Promise<"steered" | "queued" | "none"> {
   if (params.signal?.aborted) {
@@ -567,7 +657,6 @@ async function maybeQueueSubagentAnnounce(params: {
   const canonicalKey = resolveRequesterStoreKey(cfg, params.requesterSessionKey);
   const sessionId = entry?.sessionId;
   if (!sessionId) {
-    defaultRuntime.log?.(`Subagent announce: no sessionId for ${canonicalKey}, skipping queue`);
     return "none";
   }
 
@@ -602,7 +691,6 @@ async function maybeQueueSubagentAnnounce(params: {
         enqueuedAt: Date.now(),
         sessionKey: canonicalKey,
         origin,
-        suppressExternalDelivery: params.suppressExternalDelivery,
       },
       settings: queueSettings,
       send: sendAnnounce,
@@ -610,31 +698,7 @@ async function maybeQueueSubagentAnnounce(params: {
     return "queued";
   }
 
-  defaultRuntime.log?.(
-    `Subagent announce: session ${canonicalKey} not active (mode=${queueSettings.mode}), falling through to direct`,
-  );
   return "none";
-}
-
-function queueOutcomeToDeliveryResult(
-  outcome: "steered" | "queued" | "none",
-): SubagentAnnounceDeliveryResult {
-  if (outcome === "steered") {
-    return {
-      delivered: true,
-      path: "steered",
-    };
-  }
-  if (outcome === "queued") {
-    return {
-      delivered: true,
-      path: "queued",
-    };
-  }
-  return {
-    delivered: false,
-    path: "none",
-  };
 }
 
 async function sendSubagentAnnounceDirectly(params: {
@@ -649,7 +713,6 @@ async function sendSubagentAnnounceDirectly(params: {
   completionDirectOrigin?: DeliveryContext;
   directOrigin?: DeliveryContext;
   requesterIsSubagent: boolean;
-  suppressExternalDelivery?: boolean;
   signal?: AbortSignal;
 }): Promise<SubagentAnnounceDeliveryResult> {
   if (params.signal?.aborted) {
@@ -717,18 +780,23 @@ async function sendSubagentAnnounceDirectly(params: {
             path: "none",
           };
         }
-        await callGateway({
-          method: "send",
-          params: {
-            channel: completionChannel,
-            to: completionTo,
-            accountId: completionDirectOrigin?.accountId,
-            threadId: completionThreadId,
-            sessionKey: canonicalRequesterSessionKey,
-            message: params.completionMessage,
-            idempotencyKey: params.directIdempotencyKey,
-          },
-          timeoutMs: announceTimeoutMs,
+        await runAnnounceDeliveryWithRetry({
+          operation: "completion direct send",
+          signal: params.signal,
+          run: async () =>
+            await callGateway({
+              method: "send",
+              params: {
+                channel: completionChannel,
+                to: completionTo,
+                accountId: completionDirectOrigin?.accountId,
+                threadId: completionThreadId,
+                sessionKey: canonicalRequesterSessionKey,
+                message: params.completionMessage,
+                idempotencyKey: params.directIdempotencyKey,
+              },
+              timeoutMs: announceTimeoutMs,
+            }),
         });
 
         return {
@@ -739,7 +807,16 @@ async function sendSubagentAnnounceDirectly(params: {
     }
 
     const directOrigin = normalizeDeliveryContext(params.directOrigin);
-    const suppressDelivery = params.requesterIsSubagent || params.suppressExternalDelivery === true;
+    const directChannelRaw =
+      typeof directOrigin?.channel === "string" ? directOrigin.channel.trim() : "";
+    const directChannel =
+      directChannelRaw && isDeliverableMessageChannel(directChannelRaw) ? directChannelRaw : "";
+    const directTo = typeof directOrigin?.to === "string" ? directOrigin.to.trim() : "";
+    const hasDeliverableDirectTarget =
+      !params.requesterIsSubagent && Boolean(directChannel) && Boolean(directTo);
+    const shouldDeliverExternally =
+      !params.requesterIsSubagent &&
+      (!params.expectsCompletionMessage || hasDeliverableDirectTarget);
     const threadId =
       directOrigin?.threadId != null && directOrigin.threadId !== ""
         ? String(directOrigin.threadId)
@@ -750,21 +827,26 @@ async function sendSubagentAnnounceDirectly(params: {
         path: "none",
       };
     }
-    await callGateway({
-      method: "agent",
-      params: {
-        sessionKey: canonicalRequesterSessionKey,
-        message: params.triggerMessage,
-        deliver: !suppressDelivery,
-        bestEffortDeliver: params.bestEffortDeliver,
-        channel: suppressDelivery ? undefined : directOrigin?.channel,
-        accountId: suppressDelivery ? undefined : directOrigin?.accountId,
-        to: suppressDelivery ? undefined : directOrigin?.to,
-        threadId: suppressDelivery ? undefined : threadId,
-        idempotencyKey: params.directIdempotencyKey,
-      },
-      expectFinal: true,
-      timeoutMs: announceTimeoutMs,
+    await runAnnounceDeliveryWithRetry({
+      operation: "direct announce agent call",
+      signal: params.signal,
+      run: async () =>
+        await callGateway({
+          method: "agent",
+          params: {
+            sessionKey: canonicalRequesterSessionKey,
+            message: params.triggerMessage,
+            deliver: shouldDeliverExternally,
+            bestEffortDeliver: params.bestEffortDeliver,
+            channel: shouldDeliverExternally ? directChannel : undefined,
+            accountId: shouldDeliverExternally ? directOrigin?.accountId : undefined,
+            to: shouldDeliverExternally ? directTo : undefined,
+            threadId: shouldDeliverExternally ? threadId : undefined,
+            idempotencyKey: params.directIdempotencyKey,
+          },
+          expectFinal: true,
+          timeoutMs: announceTimeoutMs,
+        }),
     });
 
     return {
@@ -792,74 +874,40 @@ async function deliverSubagentAnnouncement(params: {
   targetRequesterSessionKey: string;
   requesterIsSubagent: boolean;
   expectsCompletionMessage: boolean;
-  suppressExternalDelivery?: boolean;
   bestEffortDeliver?: boolean;
   completionRouteMode?: "bound" | "fallback" | "hook";
   spawnMode?: SpawnSubagentMode;
   directIdempotencyKey: string;
   signal?: AbortSignal;
 }): Promise<SubagentAnnounceDeliveryResult> {
-  if (params.signal?.aborted) {
-    return {
-      delivered: false,
-      path: "none",
-    };
-  }
-  // Non-completion mode mirrors historical behavior: try queued/steered delivery first,
-  // then (only if not queued) attempt direct delivery.
-  if (!params.expectsCompletionMessage) {
-    const queueOutcome = await maybeQueueSubagentAnnounce({
-      requesterSessionKey: params.requesterSessionKey,
-      announceId: params.announceId,
-      triggerMessage: params.triggerMessage,
-      summaryLine: params.summaryLine,
-      requesterOrigin: params.requesterOrigin,
-      suppressExternalDelivery: params.suppressExternalDelivery,
-      signal: params.signal,
-    });
-    const queued = queueOutcomeToDeliveryResult(queueOutcome);
-    if (queued.delivered) {
-      return queued;
-    }
-  }
-
-  // Completion-mode uses direct send first so manual spawns can return immediately
-  // in the common ready-to-deliver case.
-  const direct = await sendSubagentAnnounceDirectly({
-    targetRequesterSessionKey: params.targetRequesterSessionKey,
-    triggerMessage: params.triggerMessage,
-    completionMessage: params.completionMessage,
-    directIdempotencyKey: params.directIdempotencyKey,
-    completionDirectOrigin: params.completionDirectOrigin,
-    completionRouteMode: params.completionRouteMode,
-    spawnMode: params.spawnMode,
-    directOrigin: params.directOrigin,
-    requesterIsSubagent: params.requesterIsSubagent,
+  return await runSubagentAnnounceDispatch({
     expectsCompletionMessage: params.expectsCompletionMessage,
-    suppressExternalDelivery: params.suppressExternalDelivery,
     signal: params.signal,
-    bestEffortDeliver: params.bestEffortDeliver,
+    queue: async () =>
+      await maybeQueueSubagentAnnounce({
+        requesterSessionKey: params.requesterSessionKey,
+        announceId: params.announceId,
+        triggerMessage: params.triggerMessage,
+        summaryLine: params.summaryLine,
+        requesterOrigin: params.requesterOrigin,
+        signal: params.signal,
+      }),
+    direct: async () =>
+      await sendSubagentAnnounceDirectly({
+        targetRequesterSessionKey: params.targetRequesterSessionKey,
+        triggerMessage: params.triggerMessage,
+        completionMessage: params.completionMessage,
+        directIdempotencyKey: params.directIdempotencyKey,
+        completionDirectOrigin: params.completionDirectOrigin,
+        completionRouteMode: params.completionRouteMode,
+        spawnMode: params.spawnMode,
+        directOrigin: params.directOrigin,
+        requesterIsSubagent: params.requesterIsSubagent,
+        expectsCompletionMessage: params.expectsCompletionMessage,
+        signal: params.signal,
+        bestEffortDeliver: params.bestEffortDeliver,
+      }),
   });
-  if (direct.delivered || !params.expectsCompletionMessage) {
-    return direct;
-  }
-
-  // If completion path failed direct delivery, try queueing as a fallback so the
-  // report can still be delivered once the requester session is idle.
-  const queueOutcome = await maybeQueueSubagentAnnounce({
-    requesterSessionKey: params.requesterSessionKey,
-    announceId: params.announceId,
-    triggerMessage: params.triggerMessage,
-    summaryLine: params.summaryLine,
-    requesterOrigin: params.requesterOrigin,
-    suppressExternalDelivery: params.suppressExternalDelivery,
-    signal: params.signal,
-  });
-  if (queueOutcome === "steered" || queueOutcome === "queued") {
-    return queueOutcomeToDeliveryResult(queueOutcome);
-  }
-
-  return direct;
 }
 
 function loadSessionEntryByKey(sessionKey: string) {
@@ -876,6 +924,8 @@ export function buildSubagentSystemPrompt(params: {
   childSessionKey: string;
   label?: string;
   task?: string;
+  /** Whether ACP-specific routing guidance should be included. Defaults to true. */
+  acpEnabled?: boolean;
   /** Depth of the child being spawned (1 = sub-agent, 2 = sub-sub-agent). */
   childDepth?: number;
   /** Config value: max allowed spawn depth. */
@@ -890,6 +940,7 @@ export function buildSubagentSystemPrompt(params: {
     typeof params.maxSpawnDepth === "number"
       ? params.maxSpawnDepth
       : DEFAULT_SUBAGENT_MAX_SPAWN_DEPTH;
+  const acpEnabled = params.acpEnabled !== false;
   const canSpawn = childDepth < maxSpawnDepth;
   const parentLabel = childDepth >= 2 ? "parent orchestrator" : "main agent";
 
@@ -935,6 +986,17 @@ export function buildSubagentSystemPrompt(params: {
       "Default workflow: spawn work, continue orchestrating, and wait for auto-announced completions.",
       "Do NOT repeatedly poll `subagents list` in a loop unless you are actively debugging or intervening.",
       "Coordinate their work and synthesize results before reporting back.",
+      ...(acpEnabled
+        ? [
+            'For ACP harness sessions (codex/claudecode/gemini), use `sessions_spawn` with `runtime: "acp"` (set `agentId` unless `acp.defaultAgent` is configured).',
+            '`agents_list` and `subagents` apply to OpenClaw sub-agents (`runtime: "subagent"`); ACP harness ids are controlled by `acp.allowedAgents`.',
+            "Do not ask users to run slash commands or CLI when `sessions_spawn` can do it directly.",
+            "Do not use `exec` (`openclaw ...`, `acpx ...`) to spawn ACP sessions.",
+            'Use `subagents` only for OpenClaw subagents (`runtime: "subagent"`).',
+            "Subagent results auto-announce back to you; ACP sessions continue in their bound thread.",
+            "Avoid polling loops; spawn, orchestrate, and synthesize results.",
+          ]
+        : []),
       "",
     );
   } else if (childDepth >= 2) {
@@ -1004,7 +1066,6 @@ export async function runSubagentAnnounceFlow(params: {
   label?: string;
   outcome?: SubagentRunOutcome;
   announceType?: SubagentAnnounceType;
-  suppressExternalDelivery?: boolean;
   expectsCompletionMessage?: boolean;
   spawnMode?: SpawnSubagentMode;
   signal?: AbortSignal;
@@ -1097,6 +1158,13 @@ export async function runSubagentAnnounceFlow(params: {
       return false;
     }
 
+    if (isAnnounceSkip(reply)) {
+      return true;
+    }
+    if (isSilentReplyText(reply, SILENT_REPLY_TOKEN)) {
+      return true;
+    }
+
     if (!outcome) {
       outcome = { status: "unknown" };
     }
@@ -1184,11 +1252,6 @@ export async function runSubagentAnnounceFlow(params: {
       }
     }
 
-    // Queue-dispatched jobs suppress external delivery even when requester depth is 0.
-    // The dispatching agent should receive the result internally (session injection)
-    // and decide when/how to relay it to the human.
-    const suppressDelivery = requesterIsSubagent || params.suppressExternalDelivery === true;
-
     let remainingActiveSubagentRuns = 0;
     try {
       const { countActiveDescendantRuns } = await import("./subagent-registry.js");
@@ -1201,7 +1264,7 @@ export async function runSubagentAnnounceFlow(params: {
     }
     const replyInstruction = buildAnnounceReplyInstruction({
       remainingActiveSubagentRuns,
-      requesterIsSubagent: suppressDelivery,
+      requesterIsSubagent,
       announceType,
       expectsCompletionMessage,
     });
@@ -1230,19 +1293,13 @@ export async function runSubagentAnnounceFlow(params: {
       childSessionKey: params.childSessionKey,
       childRunId: params.childRunId,
     });
-    // Send to the requester session. For nested subagents and queue-dispatched
-    // jobs this is an internal follow-up injection (deliver=false) so the
-    // orchestrating agent receives it without external channel delivery.
+    // Send to the requester session. For nested subagents this is an internal
+    // follow-up injection (deliver=false) so the orchestrator receives it.
     let directOrigin = targetRequesterOrigin;
     if (!requesterIsSubagent) {
       const { entry } = loadRequesterSessionEntry(targetRequesterSessionKey);
       directOrigin = resolveAnnounceOrigin(entry, targetRequesterOrigin);
     }
-    defaultRuntime.log?.(
-      `Subagent announce: direct → ${targetRequesterSessionKey} deliver=${!suppressDelivery} ` +
-        `ch=${directOrigin?.channel ?? "none"} to=${directOrigin?.to ?? "none"} ` +
-        `threadId=${directOrigin?.threadId ?? "none"} suppress=${params.suppressExternalDelivery ?? false}`,
-    );
     const completionResolution =
       expectsCompletionMessage && !requesterIsSubagent
         ? await resolveSubagentCompletionOrigin({
@@ -1277,7 +1334,6 @@ export async function runSubagentAnnounceFlow(params: {
       targetRequesterSessionKey,
       requesterIsSubagent,
       expectsCompletionMessage: expectsCompletionMessage,
-      suppressExternalDelivery: params.suppressExternalDelivery,
       bestEffortDeliver: params.bestEffortDeliver,
       completionRouteMode: completionResolution.routeMode,
       spawnMode: params.spawnMode,
@@ -1289,30 +1345,6 @@ export async function runSubagentAnnounceFlow(params: {
       defaultRuntime.error?.(
         `Subagent completion direct announce failed for run ${params.childRunId}: ${delivery.error}`,
       );
-    }
-
-    // Best-effort user notification for queue-dispatched completions.
-    // Sends a compact status line directly to the user's channel thread so they
-    // can see the sub-agent completed, independent of the agent's processing.
-    if (params.suppressExternalDelivery && directOrigin?.channel && directOrigin?.to) {
-      const notifyText = `Sub-agent ${announceType} "${taskLabel}" ${statusLabel} (${statsLine}).`;
-      callGateway({
-        method: "send",
-        params: {
-          to: directOrigin.to,
-          channel: directOrigin.channel,
-          accountId: directOrigin.accountId,
-          message: notifyText,
-          threadId:
-            directOrigin.threadId != null && directOrigin.threadId !== ""
-              ? String(directOrigin.threadId)
-              : undefined,
-          idempotencyKey: `notify:${directIdempotencyKey}`,
-        },
-        timeoutMs: 5_000,
-      }).catch((err) => {
-        defaultRuntime.log?.(`Subagent announce: user notification failed: ${String(err)}`);
-      });
     }
   } catch (err) {
     defaultRuntime.error?.(`Subagent announce failed: ${String(err)}`);
