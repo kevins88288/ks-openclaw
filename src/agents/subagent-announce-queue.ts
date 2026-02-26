@@ -28,7 +28,6 @@ export type AnnounceQueueItem = {
   sessionKey: string;
   origin?: DeliveryContext;
   originKey?: string;
-  suppressExternalDelivery?: boolean;
 };
 
 export type AnnounceQueueSettings = {

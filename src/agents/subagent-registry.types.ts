@@ -32,7 +32,4 @@ export type SubagentRunRecord = {
   endedReason?: SubagentLifecycleEndedReason;
   /** Set after the subagent_ended hook has been emitted successfully once. */
   endedHookEmittedAt?: number;
-  /** When true, announce suppresses external delivery even for depth-0 requesters.
-   * Used by queue_dispatch where the requester is a top-level agent. */
-  suppressExternalDelivery?: boolean;
 };

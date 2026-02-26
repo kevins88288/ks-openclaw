@@ -1488,6 +1488,7 @@ describe("subagent announce formatting", () => {
     expect(didAnnounce).toBe(true);
     const call = agentSpy.mock.calls[0]?.[0] as {
       params?: Record<string, unknown>;
+      expectFinal?: boolean;
     };
     expect(call?.params?.channel).toBe(testCase.expectedChannel);
     expect(call?.params?.accountId).toBe(testCase.expectedAccountId);
@@ -1872,116 +1873,5 @@ describe("subagent announce formatting", () => {
       expect(call?.params?.deliver, testCase.name).toBe(testCase.expectedDeliver);
       expect(call?.params?.channel, testCase.name).toBe(testCase.expectedChannel);
     }
-  });
-
-  // Use built-in channel (not plugin) to avoid dependency on plugin registry in tests
-  it("suppresses external delivery when suppressExternalDelivery is true (queue_dispatch)", async () => {
-    const { runSubagentAnnounceFlow } = await import("./subagent-announce.js");
-    embeddedRunMock.isEmbeddedPiRunActive.mockReturnValue(false);
-    embeddedRunMock.isEmbeddedPiRunStreaming.mockReturnValue(false);
-
-    // Requester is a depth-0 agent (like Lucius dispatching via queue_dispatch)
-    const didAnnounce = await runSubagentAnnounceFlow({
-      childSessionKey: "agent:main:subagent:test",
-      childRunId: "run-suppress",
-      requesterSessionKey: "agent:main:main",
-      requesterOrigin: { channel: "telegram", accountId: "acct-tg", to: "user:abc" },
-      requesterDisplayKey: "main",
-      suppressExternalDelivery: true,
-      ...defaultOutcomeAnnounce,
-    });
-
-    expect(didAnnounce).toBe(true);
-    const call = agentSpy.mock.calls[0]?.[0] as { params?: Record<string, unknown> };
-    // Should inject into session without external delivery
-    expect(call?.params?.deliver).toBe(false);
-    expect(call?.params?.channel).toBeUndefined();
-    expect(call?.params?.to).toBeUndefined();
-    expect(call?.params?.accountId).toBeUndefined();
-    // Announce text should use internal orchestration instruction, not user delivery
-    const msg = call?.params?.message as string;
-    expect(msg).toContain("internal orchestration update");
-    expect(msg).not.toContain("ready for user delivery");
-  });
-
-  it("delivers externally when suppressExternalDelivery is not set (default)", async () => {
-    const { runSubagentAnnounceFlow } = await import("./subagent-announce.js");
-    embeddedRunMock.isEmbeddedPiRunActive.mockReturnValue(false);
-    embeddedRunMock.isEmbeddedPiRunStreaming.mockReturnValue(false);
-
-    // Same depth-0 requester but without suppressExternalDelivery
-    const didAnnounce = await runSubagentAnnounceFlow({
-      childSessionKey: "agent:main:subagent:test",
-      childRunId: "run-no-suppress",
-      requesterSessionKey: "agent:main:main",
-      requesterOrigin: { channel: "telegram", accountId: "acct-tg", to: "user:abc" },
-      requesterDisplayKey: "main",
-      ...defaultOutcomeAnnounce,
-    });
-
-    expect(didAnnounce).toBe(true);
-    const call = agentSpy.mock.calls[0]?.[0] as { params?: Record<string, unknown> };
-    // Should deliver externally (default behavior)
-    expect(call?.params?.deliver).toBe(true);
-    expect(call?.params?.channel).toBe("telegram");
-    expect(call?.params?.to).toBe("user:abc");
-    expect(call?.params?.accountId).toBe("acct-tg");
-    const msg = call?.params?.message as string;
-    expect(msg).toContain("ready for user delivery");
-    expect(msg).not.toContain("internal orchestration update");
-  });
-
-  it("sends user notification when suppressExternalDelivery is true and origin is available", async () => {
-    const { runSubagentAnnounceFlow } = await import("./subagent-announce.js");
-    embeddedRunMock.isEmbeddedPiRunActive.mockReturnValue(false);
-    embeddedRunMock.isEmbeddedPiRunStreaming.mockReturnValue(false);
-
-    await runSubagentAnnounceFlow({
-      childSessionKey: "agent:main:subagent:test",
-      childRunId: "run-notify",
-      requesterSessionKey: "agent:main:main",
-      requesterOrigin: {
-        channel: "telegram",
-        accountId: "acct-tg",
-        to: "user:abc",
-        threadId: "root-post-123",
-      },
-      requesterDisplayKey: "main",
-      suppressExternalDelivery: true,
-      ...defaultOutcomeAnnounce,
-    });
-
-    // First call: agent injection (deliver=false)
-    expect(agentSpy).toHaveBeenCalledTimes(1);
-    const agentCall = agentSpy.mock.calls[0]?.[0] as { params?: Record<string, unknown> };
-    expect(agentCall?.params?.deliver).toBe(false);
-
-    // Second call: user notification via "send"
-    await expect.poll(() => sendSpy.mock.calls.length).toBe(1);
-    const sendCall = sendSpy.mock.calls[0]?.[0] as { params?: Record<string, unknown> };
-    expect(sendCall?.params?.channel).toBe("telegram");
-    expect(sendCall?.params?.to).toBe("user:abc");
-    expect(sendCall?.params?.accountId).toBe("acct-tg");
-    expect(sendCall?.params?.threadId).toBe("root-post-123");
-    expect(sendCall?.params?.message).toContain("completed successfully");
-  });
-
-  it("does not send user notification when suppressExternalDelivery is not set", async () => {
-    const { runSubagentAnnounceFlow } = await import("./subagent-announce.js");
-    embeddedRunMock.isEmbeddedPiRunActive.mockReturnValue(false);
-    embeddedRunMock.isEmbeddedPiRunStreaming.mockReturnValue(false);
-
-    await runSubagentAnnounceFlow({
-      childSessionKey: "agent:main:subagent:test",
-      childRunId: "run-no-notify",
-      requesterSessionKey: "agent:main:main",
-      requesterOrigin: { channel: "telegram", accountId: "acct-tg", to: "user:abc" },
-      requesterDisplayKey: "main",
-      ...defaultOutcomeAnnounce,
-    });
-
-    expect(agentSpy).toHaveBeenCalledTimes(1);
-    // No send notification for non-suppressed (normal delivery path)
-    expect(sendSpy).not.toHaveBeenCalled();
   });
 });

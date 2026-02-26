@@ -396,7 +396,6 @@ function startSubagentAnnounceCleanupFlow(runId: string, entry: SubagentRunRecor
     endedAt: entry.endedAt,
     label: entry.label,
     outcome: entry.outcome,
-    suppressExternalDelivery: entry.suppressExternalDelivery,
     spawnMode: entry.spawnMode,
     expectsCompletionMessage: entry.expectsCompletionMessage,
   })
@@ -904,7 +903,6 @@ export function registerSubagentRun(params: {
   label?: string;
   model?: string;
   runTimeoutSeconds?: number;
-  suppressExternalDelivery?: boolean;
   expectsCompletionMessage?: boolean;
   spawnMode?: "run" | "session";
 }) {
@@ -934,7 +932,6 @@ export function registerSubagentRun(params: {
     startedAt: now,
     archiveAtMs,
     cleanupHandled: false,
-    suppressExternalDelivery: params.suppressExternalDelivery || undefined,
   });
   ensureListener();
   persistSubagentRuns();
