@@ -13,13 +13,15 @@ describe("resolveTranscriptPolicy", () => {
     expect(policy.preserveSignatures).toBe(true);
   });
 
-  it("enables sanitizeToolCallIds for Google provider", () => {
+  it("preserves signatures and disables tool-id rewriting for Google provider", () => {
     const policy = resolveTranscriptPolicy({
       provider: "google",
       modelId: "gemini-2.0-flash",
       modelApi: "google-generative-ai",
     });
-    expect(policy.sanitizeToolCallIds).toBe(true);
+    expect(policy.sanitizeToolCallIds).toBe(false);
+    expect(policy.toolCallIdMode).toBeUndefined();
+    expect(policy.preserveSignatures).toBe(true);
     expect(policy.sanitizeThoughtSignatures).toEqual({
       allowBase64Only: true,
       includeCamelCase: true,

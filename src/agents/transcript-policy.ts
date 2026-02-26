@@ -90,10 +90,10 @@ export function resolveTranscriptPolicy(params: {
   const needsNonImageSanitize =
     isGoogle || isAnthropic || isMistral || shouldSanitizeGeminiThoughtSignaturesForProvider;
 
-  // Keep Anthropic assistant turns byte-stable across follow-ups. Anthropic can
-  // reject requests when prior thinking/redacted_thinking-bearing turns are
-  // rewritten, and tool-id normalization mutates those turns.
-  const sanitizeToolCallIds = isGoogle || isMistral || requiresOpenAiCompatibleToolIdSanitization;
+  // Keep Anthropic and Google assistant turns byte-stable across follow-ups.
+  // Both providers reject requests when prior thinking/redacted_thinking-bearing
+  // turns are rewritten, and tool-id normalization mutates those turns.
+  const sanitizeToolCallIds = isMistral || requiresOpenAiCompatibleToolIdSanitization;
   const toolCallIdMode: ToolCallIdMode | undefined = providerToolCallIdMode
     ? providerToolCallIdMode
     : isMistral
@@ -116,7 +116,7 @@ export function resolveTranscriptPolicy(params: {
       (!isOpenAi && sanitizeToolCallIds) || requiresOpenAiCompatibleToolIdSanitization,
     toolCallIdMode,
     repairToolUseResultPairing,
-    preserveSignatures: isAnthropic,
+    preserveSignatures: isAnthropic || isGoogle,
     sanitizeThoughtSignatures: isOpenAi ? undefined : sanitizeThoughtSignatures,
     sanitizeThinkingSignatures: false,
     dropThinkingBlocks,
