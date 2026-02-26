@@ -108,7 +108,7 @@ external end-user instructions.
 
 **Google (Generative AI / Gemini CLI / Antigravity)**
 
-- Tool call id sanitization: strict alphanumeric.
+- Signature preservation (thinking-bearing turns kept byte-stable across follow-ups).
 - Tool result pairing repair and synthetic tool results.
 - Turn validation (Gemini-style turn alternation).
 - Google turn ordering fixup (prepend a tiny user bootstrap if history starts with assistant).

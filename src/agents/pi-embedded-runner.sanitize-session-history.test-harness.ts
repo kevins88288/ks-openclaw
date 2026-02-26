@@ -134,7 +134,7 @@ export async function expectGoogleModelApiFullSanitizeCall(params: {
   expect(helpers.sanitizeSessionMessagesImages).toHaveBeenCalledWith(
     params.messages,
     "session:history",
-    expect.objectContaining({ sanitizeMode: "full", sanitizeToolCallIds: true }),
+    expect.objectContaining({ sanitizeMode: "full", sanitizeToolCallIds: false }),
   );
 }
 
