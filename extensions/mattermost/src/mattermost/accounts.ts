@@ -9,6 +9,10 @@ import type {
 } from "../types.js";
 import { normalizeMattermostBaseUrl } from "./client.js";
 
+// Mattermost server MaxPostSize limit (16383) with safety margin.
+// Matches the textChunkLimit in channel.ts outbound config.
+export const MATTERMOST_DEFAULT_CHUNK_LIMIT = 16000;
+
 export type MattermostTokenSource = "env" | "config" | "none";
 export type MattermostBaseUrlSource = "env" | "config" | "none";
 

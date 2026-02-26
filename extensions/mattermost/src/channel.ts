@@ -22,6 +22,7 @@ import { MattermostConfigSchema } from "./config-schema.js";
 import { resolveMattermostGroupRequireMention } from "./group-mentions.js";
 import {
   listMattermostAccountIds,
+  MATTERMOST_DEFAULT_CHUNK_LIMIT,
   resolveDefaultMattermostAccountId,
   resolveMattermostAccount,
   resolveMattermostReplyToMode,
@@ -374,7 +375,7 @@ export const mattermostPlugin: ChannelPlugin<ResolvedMattermostAccount> = {
     deliveryMode: "direct",
     chunker: (text, limit) => getMattermostRuntime().channel.text.chunkMarkdownText(text, limit),
     chunkerMode: "markdown",
-    textChunkLimit: 4000,
+    textChunkLimit: MATTERMOST_DEFAULT_CHUNK_LIMIT,
     resolveTarget: ({ to }) => {
       const trimmed = to?.trim();
       if (!trimmed) {
