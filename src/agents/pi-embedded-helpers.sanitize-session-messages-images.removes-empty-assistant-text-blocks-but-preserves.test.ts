@@ -279,6 +279,38 @@ describe("sanitizeSessionMessagesImages", () => {
       expect(content[0]?.thought_signature).toBe("msg_keep");
       expect(content[1]?.thought_signature).toBe("msg_keep2");
     });
+
+    it("keeps assistant message identity when preserveSignatures is enabled and no image sanitization runs", async () => {
+      const assistant = {
+        role: "assistant",
+        content: [{ type: "thinking", thinking: "reasoning", thinkingSignature: "sig" }],
+      } as unknown as AgentMessage;
+      Object.defineProperty(assistant, "provider", {
+        value: "anthropic",
+        enumerable: false,
+        configurable: true,
+      });
+      Object.defineProperty(assistant, "api", {
+        value: "anthropic-messages",
+        enumerable: false,
+        configurable: true,
+      });
+      Object.defineProperty(assistant, "model", {
+        value: "claude-sonnet-4-6",
+        enumerable: false,
+        configurable: true,
+      });
+
+      const out = await sanitizeSessionMessagesImages([assistant], "test", {
+        preserveSignatures: true,
+      });
+
+      expect(out).toHaveLength(1);
+      expect(out[0]).toBe(assistant);
+      expect((out[0] as { provider?: string }).provider).toBe("anthropic");
+      expect((out[0] as { api?: string }).api).toBe("anthropic-messages");
+      expect((out[0] as { model?: string }).model).toBe("claude-sonnet-4-6");
+    });
   });
 });
 

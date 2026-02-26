@@ -7,6 +7,15 @@ import { stripThoughtSignatures } from "./bootstrap.js";
 
 type ContentBlock = AgentToolResult<unknown>["content"][number];
 
+function hasImageBlocks(content: unknown[]): boolean {
+  return content.some((block) => {
+    if (!block || typeof block !== "object") {
+      return false;
+    }
+    return (block as { type?: unknown }).type === "image";
+  });
+}
+
 export function isEmptyAssistantMessageContent(
   message: Extract<AgentMessage, { role: "assistant" }>,
 ): boolean {
@@ -71,6 +80,10 @@ export async function sanitizeSessionMessagesImages(
     if (role === "toolResult") {
       const toolMsg = msg as Extract<AgentMessage, { role: "toolResult" }>;
       const content = Array.isArray(toolMsg.content) ? toolMsg.content : [];
+      if (!hasImageBlocks(content)) {
+        out.push(toolMsg);
+        continue;
+      }
       const nextContent = (await sanitizeContentBlocksImages(
         content,
         label,
@@ -84,6 +97,10 @@ export async function sanitizeSessionMessagesImages(
       const userMsg = msg as Extract<AgentMessage, { role: "user" }>;
       const content = userMsg.content;
       if (Array.isArray(content)) {
+        if (!hasImageBlocks(content)) {
+          out.push(userMsg);
+          continue;
+        }
         const nextContent = (await sanitizeContentBlocksImages(
           content as unknown as ContentBlock[],
           label,
@@ -99,6 +116,10 @@ export async function sanitizeSessionMessagesImages(
       if (assistantMsg.stopReason === "error") {
         const content = assistantMsg.content;
         if (Array.isArray(content)) {
+          if (!hasImageBlocks(content)) {
+            out.push(assistantMsg);
+            continue;
+          }
           const nextContent = (await sanitizeContentBlocksImages(
             content as unknown as ContentBlock[],
             label,
@@ -112,6 +133,11 @@ export async function sanitizeSessionMessagesImages(
       }
       const content = assistantMsg.content;
       if (Array.isArray(content)) {
+        const containsImageBlocks = hasImageBlocks(content);
+        if (!containsImageBlocks && (!allowNonImageSanitization || options?.preserveSignatures)) {
+          out.push(assistantMsg);
+          continue;
+        }
         if (!allowNonImageSanitization) {
           const nextContent = (await sanitizeContentBlocksImages(
             content as unknown as ContentBlock[],
