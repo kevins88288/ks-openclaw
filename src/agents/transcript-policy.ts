@@ -3,7 +3,6 @@ import { isGoogleModelApi } from "./pi-embedded-helpers/google.js";
 import {
   isAnthropicProviderFamily,
   isOpenAiProviderFamily,
-  preservesAnthropicThinkingSignatures,
   resolveTranscriptToolCallIdMode,
   shouldDropThinkingBlocksForModel,
   shouldSanitizeGeminiThoughtSignaturesForModel,
@@ -91,8 +90,10 @@ export function resolveTranscriptPolicy(params: {
   const needsNonImageSanitize =
     isGoogle || isAnthropic || isMistral || shouldSanitizeGeminiThoughtSignaturesForProvider;
 
-  const sanitizeToolCallIds =
-    isGoogle || isMistral || isAnthropic || requiresOpenAiCompatibleToolIdSanitization;
+  // Keep Anthropic assistant turns byte-stable across follow-ups. Anthropic can
+  // reject requests when prior thinking/redacted_thinking-bearing turns are
+  // rewritten, and tool-id normalization mutates those turns.
+  const sanitizeToolCallIds = isGoogle || isMistral || requiresOpenAiCompatibleToolIdSanitization;
   const toolCallIdMode: ToolCallIdMode | undefined = providerToolCallIdMode
     ? providerToolCallIdMode
     : isMistral
@@ -115,7 +116,7 @@ export function resolveTranscriptPolicy(params: {
       (!isOpenAi && sanitizeToolCallIds) || requiresOpenAiCompatibleToolIdSanitization,
     toolCallIdMode,
     repairToolUseResultPairing,
-    preserveSignatures: isAnthropic && preservesAnthropicThinkingSignatures(provider),
+    preserveSignatures: isAnthropic,
     sanitizeThoughtSignatures: isOpenAi ? undefined : sanitizeThoughtSignatures,
     sanitizeThinkingSignatures: false,
     dropThinkingBlocks,

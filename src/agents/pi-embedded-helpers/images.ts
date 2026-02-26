@@ -122,19 +122,21 @@ export async function sanitizeSessionMessagesImages(
           continue;
         }
         const strippedContent = options?.preserveSignatures
-          ? content // Keep signatures for Antigravity Claude
-          : stripThoughtSignatures(content, options?.sanitizeThoughtSignatures); // Strip for Gemini
+          ? content
+          : stripThoughtSignatures(content, options?.sanitizeThoughtSignatures);
 
-        const filteredContent = strippedContent.filter((block) => {
-          if (!block || typeof block !== "object") {
-            return true;
-          }
-          const rec = block as { type?: unknown; text?: unknown };
-          if (rec.type !== "text" || typeof rec.text !== "string") {
-            return true;
-          }
-          return rec.text.trim().length > 0;
-        });
+        const filteredContent = options?.preserveSignatures
+          ? strippedContent
+          : strippedContent.filter((block) => {
+              if (!block || typeof block !== "object") {
+                return true;
+              }
+              const rec = block as { type?: unknown; text?: unknown };
+              if (rec.type !== "text" || typeof rec.text !== "string") {
+                return true;
+              }
+              return rec.text.trim().length > 0;
+            });
         const finalContent = (await sanitizeContentBlocksImages(
           filteredContent as unknown as ContentBlock[],
           label,
