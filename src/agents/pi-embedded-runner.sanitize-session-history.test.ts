@@ -122,7 +122,11 @@ describe("sanitizeSessionHistory", () => {
     expect(helpers.sanitizeSessionMessagesImages).toHaveBeenCalledWith(
       mockMessages,
       "session:history",
-      expect.objectContaining({ sanitizeMode: "full", sanitizeToolCallIds: true }),
+      expect.objectContaining({
+        sanitizeMode: "full",
+        sanitizeToolCallIds: false,
+        preserveSignatures: true,
+      }),
     );
   });
 

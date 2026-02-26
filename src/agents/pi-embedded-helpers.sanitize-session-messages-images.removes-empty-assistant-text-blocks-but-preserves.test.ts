@@ -257,6 +257,28 @@ describe("sanitizeSessionMessagesImages", () => {
       expect("thought_signature" in ((content?.[0] ?? {}) as object)).toBe(false);
       expect((content?.[1] as { thought_signature?: unknown })?.thought_signature).toBe("AQID");
     });
+
+    it("preserves assistant block shape and signatures when preserveSignatures is enabled", async () => {
+      const input = [
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: "", thought_signature: "msg_keep" },
+            { type: "thinking", thinking: "reasoning", thought_signature: "msg_keep2" },
+          ],
+        },
+      ] as unknown as AgentMessage[];
+
+      const out = await sanitizeSessionMessagesImages(input, "test", {
+        preserveSignatures: true,
+      });
+
+      const content = (out[0] as { content?: unknown[] }).content as Array<Record<string, unknown>>;
+      expect(content).toHaveLength(2);
+      expect(content[0]?.text).toBe("");
+      expect(content[0]?.thought_signature).toBe("msg_keep");
+      expect(content[1]?.thought_signature).toBe("msg_keep2");
+    });
   });
 });
 
