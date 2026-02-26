@@ -11,6 +11,7 @@ const asAppendMessage = (message: unknown) => message as AppendMessage;
 const toolCallMessage = asAppendMessage({
   role: "assistant",
   content: [{ type: "toolCall", id: "call_1", name: "read", arguments: {} }],
+  stopReason: "toolUse",
 });
 
 function appendToolResultText(sm: SessionManager, text: string) {
@@ -191,6 +192,7 @@ describe("installSessionToolResultGuard", () => {
           { type: "toolCall", id: "call_a", name: "one", arguments: {} },
           { type: "toolUse", id: "call_b", name: "two", arguments: {} },
         ],
+        stopReason: "toolUse",
       }),
     );
     sm.appendMessage(
@@ -241,6 +243,7 @@ describe("installSessionToolResultGuard", () => {
       asAppendMessage({
         role: "assistant",
         content: [{ type: "toolUse", id: "use_1", name: "f", arguments: {} }],
+        stopReason: "toolUse",
       }),
     );
     sm.appendMessage(
@@ -340,6 +343,7 @@ describe("installSessionToolResultGuard", () => {
       asAppendMessage({
         role: "assistant",
         content: [{ type: "toolCall", id: "call_1", name: "read", arguments: {} }],
+        stopReason: "toolUse",
       }),
     );
     sm.appendMessage(
@@ -351,6 +355,26 @@ describe("installSessionToolResultGuard", () => {
 
     expectPersistedRoles(sm, ["assistant", "assistant"]);
     expect(guard.getPendingIds()).toEqual(["call_2"]);
+  });
+
+  it("skips synthetic flush when last assistant message has no stopReason (interrupted stream)", () => {
+    const sm = SessionManager.inMemory();
+    const guard = installSessionToolResultGuard(sm);
+
+    // Simulate an interrupted stream: assistant message with tool calls but no stopReason
+    sm.appendMessage(
+      asAppendMessage({
+        role: "assistant",
+        content: [{ type: "toolCall", id: "call_interrupted", name: "exec", arguments: {} }],
+        // no stopReason — stream was interrupted (e.g. auth error mid-stream)
+      }),
+    );
+
+    guard.flushPendingToolResults();
+
+    // Should NOT have synthesized a tool result — just cleared pending
+    expectPersistedRoles(sm, ["assistant"]);
+    expect(guard.getPendingIds()).toEqual([]);
   });
 
   it("caps oversized tool result text during persistence", () => {
