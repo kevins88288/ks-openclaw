@@ -230,6 +230,17 @@ openclaw devices approve <requestId>
 
 ---
 
+## Deployment Boundary (IMPORTANT)
+
+- **This repo** (`~/workspace/ks-openclaw/`) is the OpenClaw platform source. All code changes, builds, tests, and the gateway binary live here.
+- **`~/workspace/openclaw/`** is the Alfred deployment directory (identity, memory, soul files, patches, agent workspaces). It contains NO platform source code.
+- The global `openclaw` binary is symlinked: `~/.local/bin/openclaw` → `~/workspace/ks-openclaw/openclaw.mjs`.
+- **To deploy a code fix:** `pnpm build` in this repo, then restart the gateway. No install or pull in `~/workspace/openclaw/` needed.
+- **To restart the gateway:** `pkill -9 -f openclaw-gateway || true; nohup openclaw gateway run --bind loopback --port 18789 --force > /tmp/openclaw-gateway.log 2>&1 &`
+- **Never `cd ~/workspace/openclaw && git pull` expecting code changes.** That repo tracks deployment config only.
+
+---
+
 ## Local Patches (Alfred Deployment)
 
 > These patches are maintained in `~/workspace/openclaw/patches/` and must be re-applied after every upstream pull. See `UPGRADE-LOG.md` for history of upgrades and patch outcomes.
