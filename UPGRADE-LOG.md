@@ -5,6 +5,59 @@ For each upgrade, document: what changed, what broke, what we fixed, test result
 
 ---
 
+## 2026-02-27 — Upstream merge (v2026.2.26 tail: Android/canvas cleanup + Discord thread bindings)
+
+**Upstream range:** 11 commits merged (merge base `5c0255477` → `a7929abad`)
+**Merge commit:** `ad16d2b44`
+**Safety tag:** `pre-upgrade-2026.2.27`
+
+### What changed
+
+- Merged 11 upstream commits (10 planned + 1 new Discord thread bindings commit)
+- 9 Android-only commits (no impact on Alfred's Linux deployment)
+- 1 TypeScript fix: `src/media/mime.ts` — serve JS assets with `text/javascript` MIME type
+- 1 Discord fix: thread bindings idle + max-age lifecycle (#27845)
+
+### Conflicts resolved (2)
+
+1. **`package.json`** — Kept our `google-auth-library` addition + upstream's grammy `^1.40.0` → `^1.40.1` bump
+2. **`src/gateway/server-methods/send.ts`** — Kept both our `threadId` refactor and upstream's `buildOutboundSessionContext()` call
+
+### Patch status
+
+| Patch                                   | Status                                                                  | Action             |
+| --------------------------------------- | ----------------------------------------------------------------------- | ------------------ |
+| `openclaw-hook-runner-fix.patch`        | Fixed upstream (line 384 in `src/plugins/loader.ts`)                    | No re-apply needed |
+| `openclaw-gcp-adc.patch`                | Already in merged code (line 237 in `zod-schema.core.ts`)               | No re-apply needed |
+| `openclaw-failover-crash-fix.patch`     | Already in merged code (`isFailoverError` in `unhandled-rejections.ts`) | No re-apply needed |
+| `openclaw-session-corruption-fix.patch` | Already in merged code (`session-tool-result-guard.ts`)                 | No re-apply needed |
+
+### Test results
+
+- **Build:** Clean (no TS errors)
+- **Tests:** 13,763 passed, 10 failed, 3 pending (4,773 suites)
+- 10 failures are pre-existing (timeout/config-dependent tests on this server)
+
+### Post-deploy verification
+
+- Gateway startup: clean (0 errors in log)
+- Port 18789: listening
+- Devices: all 4 paired and approved (no pending re-pair requests)
+- Channels: all connected and working
+  - Telegram: works (polling mode)
+  - WhatsApp: connected
+  - Discord (2 bots): works
+  - Mattermost (9 bots): all connected
+- Doctor migration suggestions: multi-account config migration for discord/mattermost/matrix (informational, run `openclaw doctor --fix` when ready)
+
+### Notes
+
+- All 4 patches from `~/workspace/openclaw/patches/` are now carried in the merged codebase — no manual patch application needed post-merge
+- The delivery recovery queue had 39 deferred messages in backoff (expected — these will retry automatically)
+- Discord cortex audit warning is pre-existing (channel permission issue)
+
+---
+
 ## 2026-02-27 — Upstream merge + cherry-pick `689188994`
 
 **Upstream range:** 10 commits merged (v2026.2.25 baseline)
