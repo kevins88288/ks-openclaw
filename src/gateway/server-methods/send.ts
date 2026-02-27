@@ -10,6 +10,7 @@ import {
   resolveOutboundSessionRoute,
 } from "../../infra/outbound/outbound-session.js";
 import { normalizeReplyPayloadsForDelivery } from "../../infra/outbound/payloads.js";
+import { buildOutboundSessionContext } from "../../infra/outbound/session-context.js";
 import { resolveOutboundTarget } from "../../infra/outbound/targets.js";
 import { normalizePollInput } from "../../polls.js";
 import {
@@ -236,13 +237,18 @@ export const sendHandlers: GatewayRequestHandlers = {
           typeof request.threadId === "string" && request.threadId.trim().length > 0
             ? request.threadId.trim()
             : undefined;
+        const outboundSession = buildOutboundSessionContext({
+          cfg,
+          agentId: effectiveAgentId,
+          sessionKey: providedSessionKey ?? derivedRoute?.sessionKey,
+        });
         const results = await deliverOutboundPayloads({
           cfg,
           channel: outboundChannel,
           to: resolved.to,
           accountId,
           payloads: [{ text: message, mediaUrl, mediaUrls }],
-          agentId: effectiveAgentId,
+          session: outboundSession,
           gifPlayback: request.gifPlayback,
           threadId,
           deps: outboundDeps,
