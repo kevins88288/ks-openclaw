@@ -1,6 +1,14 @@
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
-import { createReplyPrefixOptions } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/mattermost";
+import { createReplyPrefixOptions } from "openclaw/plugin-sdk/mattermost";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+const { sendMessageMattermostMock } = vi.hoisted(() => ({
+  sendMessageMattermostMock: vi.fn(),
+}));
+
+vi.mock("./mattermost/send.js", () => ({
+  sendMessageMattermost: sendMessageMattermostMock,
+}));
+
 import { mattermostPlugin } from "./channel.js";
 import { resetMattermostReactionBotUserCacheForTests } from "./mattermost/reactions.js";
 import {
@@ -8,16 +16,16 @@ import {
   createMattermostTestConfig,
   withMockedGlobalFetch,
 } from "./mattermost/reactions.test-helpers.js";
-import { sendMessageMattermost } from "./mattermost/send.js";
-
-vi.mock("./mattermost/send.js", () => ({
-  sendMessageMattermost: vi.fn(async () => ({
-    messageId: "m1",
-    channelId: "ch-1",
-  })),
-}));
 
 describe("mattermostPlugin", () => {
+  beforeEach(() => {
+    sendMessageMattermostMock.mockReset();
+    sendMessageMattermostMock.mockResolvedValue({
+      messageId: "post-1",
+      channelId: "channel-1",
+    });
+  });
+
   describe("messaging", () => {
     it("keeps @username targets", () => {
       const normalize = mattermostPlugin.messaging?.normalizeTarget;
@@ -207,11 +215,61 @@ describe("mattermostPlugin", () => {
     });
   });
 
-  describe("outbound threadId routing", () => {
-    const mockSend = sendMessageMattermost as ReturnType<typeof vi.fn>;
+  describe("outbound", () => {
+    it("forwards mediaLocalRoots on sendMedia", async () => {
+      const sendMedia = mattermostPlugin.outbound?.sendMedia;
+      if (!sendMedia) {
+        return;
+      }
 
-    beforeEach(() => {
-      mockSend.mockClear();
+      await sendMedia({
+        to: "channel:CHAN1",
+        text: "hello",
+        mediaUrl: "/tmp/workspace/image.png",
+        mediaLocalRoots: ["/tmp/workspace"],
+        accountId: "default",
+        replyToId: "post-root",
+      } as any);
+
+      expect(sendMessageMattermostMock).toHaveBeenCalledWith(
+        "channel:CHAN1",
+        "hello",
+        expect.objectContaining({
+          mediaUrl: "/tmp/workspace/image.png",
+          mediaLocalRoots: ["/tmp/workspace"],
+        }),
+      );
+    });
+
+    it("threads resolved cfg on sendText", async () => {
+      const sendText = mattermostPlugin.outbound?.sendText;
+      if (!sendText) {
+        return;
+      }
+      const cfg = {
+        channels: {
+          mattermost: {
+            botToken: "resolved-bot-token",
+            baseUrl: "https://chat.example.com",
+          },
+        },
+      } as OpenClawConfig;
+
+      await sendText({
+        cfg,
+        to: "channel:CHAN1",
+        text: "hello",
+        accountId: "default",
+      } as any);
+
+      expect(sendMessageMattermostMock).toHaveBeenCalledWith(
+        "channel:CHAN1",
+        "hello",
+        expect.objectContaining({
+          cfg,
+          accountId: "default",
+        }),
+      );
     });
 
     it("uses threadId as replyToId when replyToId is absent", async () => {
@@ -222,7 +280,7 @@ describe("mattermostPlugin", () => {
         threadId: "root-post-123",
       } as any);
 
-      expect(mockSend).toHaveBeenCalledWith(
+      expect(sendMessageMattermostMock).toHaveBeenCalledWith(
         "channel:town-square",
         "sub-agent result",
         expect.objectContaining({ replyToId: "root-post-123" }),
@@ -238,7 +296,7 @@ describe("mattermostPlugin", () => {
         threadId: "root-post-123",
       } as any);
 
-      expect(mockSend).toHaveBeenCalledWith(
+      expect(sendMessageMattermostMock).toHaveBeenCalledWith(
         "channel:town-square",
         "reply",
         expect.objectContaining({ replyToId: "specific-post-456" }),
@@ -252,7 +310,7 @@ describe("mattermostPlugin", () => {
         text: "top-level message",
       } as any);
 
-      expect(mockSend).toHaveBeenCalledWith(
+      expect(sendMessageMattermostMock).toHaveBeenCalledWith(
         "channel:town-square",
         "top-level message",
         expect.objectContaining({ replyToId: undefined }),
@@ -268,7 +326,7 @@ describe("mattermostPlugin", () => {
         threadId: "root-post-789",
       } as any);
 
-      expect(mockSend).toHaveBeenCalledWith(
+      expect(sendMessageMattermostMock).toHaveBeenCalledWith(
         "channel:town-square",
         "media in thread",
         expect.objectContaining({ replyToId: "root-post-789" }),
@@ -283,7 +341,7 @@ describe("mattermostPlugin", () => {
         threadId: 42,
       } as any);
 
-      expect(mockSend).toHaveBeenCalledWith(
+      expect(sendMessageMattermostMock).toHaveBeenCalledWith(
         "channel:town-square",
         "numeric thread",
         expect.objectContaining({ replyToId: "42" }),

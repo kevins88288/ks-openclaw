@@ -94,6 +94,7 @@ export function resolveTranscriptPolicy(params: {
     (provider === "openrouter" || provider === "opencode" || provider === "kilocode") &&
     modelId.toLowerCase().includes("gemini");
   const isCopilotClaude = provider === "github-copilot" && modelId.toLowerCase().includes("claude");
+  const requiresOpenAiCompatibleToolIdSanitization = params.modelApi === "openai-completions";
 
   // GitHub Copilot's Claude endpoints can reject persisted `thinking` blocks with
   // non-binary/non-base64 signatures (e.g. thinkingSignature: "reasoning_text").
@@ -102,10 +103,8 @@ export function resolveTranscriptPolicy(params: {
 
   const needsNonImageSanitize = isGoogle || isAnthropic || isMistral || isOpenRouterGemini;
 
-  // Keep Anthropic and Google assistant turns byte-stable across follow-ups.
-  // Both providers reject requests when prior thinking/redacted_thinking-bearing
-  // turns are rewritten, and tool-id normalization mutates those turns.
-  const sanitizeToolCallIds = isMistral;
+  const sanitizeToolCallIds =
+    isGoogle || isMistral || isAnthropic || requiresOpenAiCompatibleToolIdSanitization;
   const toolCallIdMode: ToolCallIdMode | undefined = isMistral
     ? "strict9"
     : sanitizeToolCallIds
@@ -120,7 +119,8 @@ export function resolveTranscriptPolicy(params: {
 
   return {
     sanitizeMode: isOpenAi ? "images-only" : needsNonImageSanitize ? "full" : "images-only",
-    sanitizeToolCallIds: !isOpenAi && sanitizeToolCallIds,
+    sanitizeToolCallIds:
+      (!isOpenAi && sanitizeToolCallIds) || requiresOpenAiCompatibleToolIdSanitization,
     toolCallIdMode,
     repairToolUseResultPairing,
     preserveSignatures: isAnthropic || isGoogle,

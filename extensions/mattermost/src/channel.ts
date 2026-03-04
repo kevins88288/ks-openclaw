@@ -12,7 +12,7 @@ import {
   type ChannelMessageActionAdapter,
   type ChannelMessageActionName,
   type ChannelPlugin,
-} from "openclaw/plugin-sdk";
+} from "openclaw/plugin-sdk/mattermost";
 import { MattermostConfigSchema } from "./config-schema.js";
 import { resolveMattermostGroupRequireMention } from "./group-mentions.js";
 import {
@@ -173,6 +173,7 @@ export const mattermostPlugin: ChannelPlugin<ResolvedMattermostAccount> = {
     reactions: true,
     threads: true,
     media: true,
+    nativeCommands: true,
   },
   streaming: {
     blockStreamingCoalesceDefaults: { minChars: 1500, idleMs: 1000 },
@@ -273,19 +274,31 @@ export const mattermostPlugin: ChannelPlugin<ResolvedMattermostAccount> = {
       }
       return { ok: true, to: trimmed };
     },
-    sendText: async ({ to, text, accountId, replyToId, threadId }) => {
+    sendText: async ({ cfg, to, text, accountId, replyToId, threadId }) => {
       const effectiveReplyToId = replyToId ?? (threadId ? String(threadId) : undefined);
       const result = await sendMessageMattermost(to, text, {
+        cfg,
         accountId: accountId ?? undefined,
         replyToId: effectiveReplyToId,
       });
       return { channel: "mattermost", ...result };
     },
-    sendMedia: async ({ to, text, mediaUrl, accountId, replyToId, threadId }) => {
+    sendMedia: async ({
+      cfg,
+      to,
+      text,
+      mediaUrl,
+      mediaLocalRoots,
+      accountId,
+      replyToId,
+      threadId,
+    }) => {
       const effectiveReplyToId = replyToId ?? (threadId ? String(threadId) : undefined);
       const result = await sendMessageMattermost(to, text, {
+        cfg,
         accountId: accountId ?? undefined,
         mediaUrl,
+        mediaLocalRoots,
         replyToId: effectiveReplyToId,
       });
       return { channel: "mattermost", ...result };
