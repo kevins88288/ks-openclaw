@@ -52,6 +52,7 @@ For each upgrade, document: what changed, what broke, what we fixed, test result
 
 1. **TS error: `isFailoverError` not imported** — Re-added `import { isFailoverError }` in `unhandled-rejections.ts`
 2. **TS error: `pending.clear()` stale variable** — Replaced our old `flushPendingToolResults` interrupted-stream check with upstream's clean version (uses `pendingState`)
+3. **Runtime error: `dns is not defined`** — Conflict resolution dropped our `import dns` but kept `dns.setDefaultResultOrder("ipv4first")`. Re-added the import.
 
 ### Test results
 
