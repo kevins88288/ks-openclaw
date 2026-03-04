@@ -1,4 +1,5 @@
 import process from "node:process";
+import { isFailoverError } from "../agents/failover-error.js";
 import {
   collectErrorGraphCandidates,
   extractErrorCode,

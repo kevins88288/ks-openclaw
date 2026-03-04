@@ -146,30 +146,6 @@ export function installSessionToolResultGuard(
     if (pendingState.size() === 0) {
       return;
     }
-
-    // If the last assistant message was from an interrupted stream (no stopReason),
-    // don't persist synthetic tool results — they would corrupt the session.
-    // Just clear the pending map so the next turn starts clean.
-    const entries = sessionManager.getEntries();
-    for (let i = entries.length - 1; i >= 0; i--) {
-      const entry = entries[i];
-      if (entry.type !== "message") {
-        continue;
-      }
-      const msg = (entry as { message?: { role?: string; stopReason?: string } }).message;
-      if (msg?.role === "assistant") {
-        if (!msg.stopReason) {
-          pending.clear();
-          return;
-        }
-        break;
-      }
-      // Keep scanning past toolResult entries to find the assistant message
-      if (msg?.role !== "toolResult") {
-        break;
-      }
-    }
-
     if (allowSyntheticToolResults) {
       for (const [id, name] of pendingState.entries()) {
         const synthetic = makeMissingToolResult({ toolCallId: id, toolName: name });

@@ -249,20 +249,16 @@ openclaw devices approve <requestId>
 
 > These patches are maintained in `~/workspace/openclaw/patches/` and must be re-applied after every upstream pull. See `UPGRADE-LOG.md` for history of upgrades and patch outcomes.
 
-| Patch                                   | File                                      | What it fixes                                                                                 |
-| --------------------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `openclaw-hook-runner-fix.patch`        | `src/plugins/loader.ts`                   | Cache-hit path skips `initializeGlobalHookRunner()`, breaking all hooks after SIGUSR1 restart |
-| `openclaw-gcp-adc.patch`                | `src/config/zod-schema.core.ts`           | Adds `gcp-adc` as valid auth type for GCP Application Default Credentials                     |
-| `openclaw-failover-crash-fix.patch`     | `src/infra/unhandled-rejections.ts`       | Gateway crashes on FailoverError (auth 403, rate limit) instead of continuing                 |
-| `openclaw-session-corruption-fix.patch` | `src/agents/session-tool-result-guard.ts` | Mid-stream auth error creates orphaned synthetic tool results corrupting sessions             |
+| Patch                    | File                            | What it fixes                                                             |
+| ------------------------ | ------------------------------- | ------------------------------------------------------------------------- |
+| `openclaw-gcp-adc.patch` | `src/config/zod-schema.core.ts` | Adds `gcp-adc` as valid auth type for GCP Application Default Credentials |
+
+Other patches (`hook-runner-fix`, `failover-crash-fix`, `session-corruption-fix`) were superseded by upstream v2026.3.3.
 
 **Re-apply command:**
 
 ```bash
-git apply ~/workspace/openclaw/patches/openclaw-hook-runner-fix.patch
 git apply ~/workspace/openclaw/patches/openclaw-gcp-adc.patch
-git apply ~/workspace/openclaw/patches/openclaw-failover-crash-fix.patch
-git apply ~/workspace/openclaw/patches/openclaw-session-corruption-fix.patch
 pnpm build
 ```
 
