@@ -11,6 +11,7 @@ import {
   fetchMattermostUserTeams,
   normalizeMattermostBaseUrl,
   uploadMattermostFile,
+  type MattermostPost,
   type MattermostUser,
 } from "./client.js";
 import {
@@ -182,12 +183,43 @@ async function resolveChannelIdByName(params: {
   throw new Error(`Mattermost channel "#${name}" not found in any team the bot belongs to`);
 }
 
+async function resolveDmChannelId(
+  params: { baseUrl: string; token: string },
+  targetUserId: string,
+): Promise<string> {
+  const botUser = await resolveBotUser(params.baseUrl, params.token);
+  const client = createMattermostClient({
+    baseUrl: params.baseUrl,
+    botToken: params.token,
+  });
+  const channel = await createMattermostDirectChannel(client, [botUser.id, targetUserId]);
+  return channel.id;
+}
+
+const DM_CHANNEL_NAME_RE = /^([a-z0-9]{26})__([a-z0-9]{26})$/i;
+
 async function resolveTargetChannelId(params: {
   target: MattermostTarget;
   baseUrl: string;
   token: string;
+  logger?: { warn?: (...args: unknown[]) => void };
 }): Promise<string> {
   if (params.target.kind === "channel") {
+    const match = DM_CHANNEL_NAME_RE.exec(params.target.id);
+    if (match) {
+      const [, id1, id2] = match;
+      const botUser = await resolveBotUser(params.baseUrl, params.token);
+      const botId = botUser.id;
+      if (id1 === botId && id2 !== botId) {
+        return resolveDmChannelId(params, id2);
+      } else if (id2 === botId && id1 !== botId) {
+        return resolveDmChannelId(params, id1);
+      } else {
+        params.logger?.warn?.(
+          "DM channel name pattern detected but neither ID matches bot user, passing through as literal channelId",
+        );
+      }
+    }
     return params.target.id;
   }
   if (params.target.kind === "channel-name") {
@@ -204,19 +236,13 @@ async function resolveTargetChannelId(params: {
         token: params.token,
         username: params.target.username ?? "",
       });
-  const dmKey = `${cacheKey(params.baseUrl, params.token)}::dm::${userId}`;
-  const cachedDm = dmChannelCache.get(dmKey);
-  if (cachedDm) {
-    return cachedDm;
-  }
-  const botUser = await resolveBotUser(params.baseUrl, params.token);
-  const client = createMattermostClient({
-    baseUrl: params.baseUrl,
-    botToken: params.token,
-  });
-  const channel = await createMattermostDirectChannel(client, [botUser.id, userId]);
-  dmChannelCache.set(dmKey, channel.id);
-  return channel.id;
+  return resolveDmChannelId(params, userId);
+}
+
+/** @internal — test-only, clears bot user cache between test runs */
+export function _testOnly_clearBotUserCache(): void {
+  botUserCache.clear();
+  userByNameCache.clear();
 }
 
 type MattermostSendContext = {
@@ -266,6 +292,7 @@ async function resolveMattermostSendContext(
     target,
     baseUrl,
     token,
+    logger,
   });
 
   return {
@@ -357,13 +384,30 @@ export async function sendMessageMattermost(
     throw new Error("Mattermost message is empty");
   }
 
-  const post = await createMattermostPost(client, {
-    channelId,
-    message,
-    rootId: opts.replyToId,
-    fileIds,
-    props,
-  });
+  let post: MattermostPost;
+  try {
+    post = await createMattermostPost(client, {
+      channelId,
+      message,
+      rootId: opts.replyToId,
+      fileIds,
+      props,
+    });
+  } catch (err) {
+    if (
+      opts.replyToId &&
+      err instanceof Error &&
+      err.message.includes("Mattermost API 400") &&
+      /invalid rootid/i.test(err.message)
+    ) {
+      logger.warn?.(
+        `Invalid RootId "${opts.replyToId}" for channel ${channelId}, retrying without threading`,
+      );
+      post = await createMattermostPost(client, { channelId, message, fileIds, props });
+    } else {
+      throw err;
+    }
+  }
 
   core.channel.activity.record({
     channel: "mattermost",
