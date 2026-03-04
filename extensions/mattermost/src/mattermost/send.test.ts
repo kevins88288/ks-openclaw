@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { sendMessageMattermost } from "./send.js";
+import { _testOnly_clearBotUserCache, sendMessageMattermost } from "./send.js";
 
 const mockState = vi.hoisted(() => ({
   loadConfig: vi.fn(() => ({})),
@@ -59,6 +59,7 @@ vi.mock("../runtime.js", () => ({
 
 describe("sendMessageMattermost", () => {
   beforeEach(() => {
+    _testOnly_clearBotUserCache();
     mockState.loadConfig.mockReset();
     mockState.loadConfig.mockReturnValue({});
     mockState.resolveMattermostAccount.mockReset();
@@ -146,5 +147,83 @@ describe("sendMessageMattermost", () => {
         contentType: "image/png",
       }),
     );
+  });
+
+  const BOT_ID = "c3zyaqawi3frxn3hqrthc8kmio";
+  const TARGET_USER_ID = "so9wu6dbntgsmyb91bnkj6groe";
+  const RESOLVED_DM_CHANNEL_ID = "dm-channel-resolved-id";
+
+  it("DM channel name — bot first: resolves to real DM channel id", async () => {
+    mockState.fetchMattermostMe.mockResolvedValue({ id: BOT_ID });
+    mockState.createMattermostDirectChannel.mockResolvedValue({ id: RESOLVED_DM_CHANNEL_ID });
+
+    const result = await sendMessageMattermost(
+      `channel:${BOT_ID}__${TARGET_USER_ID}`,
+      "hello",
+    );
+
+    expect(mockState.fetchMattermostMe).toHaveBeenCalledTimes(1);
+    expect(mockState.createMattermostDirectChannel).toHaveBeenCalledWith(
+      expect.anything(),
+      [BOT_ID, TARGET_USER_ID],
+    );
+    expect(mockState.createMattermostPost).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ channelId: RESOLVED_DM_CHANNEL_ID }),
+    );
+    expect(result.channelId).toBe(RESOLVED_DM_CHANNEL_ID);
+  });
+
+  it("DM channel name — bot second (reversed): resolves to real DM channel id", async () => {
+    mockState.fetchMattermostMe.mockResolvedValue({ id: BOT_ID });
+    mockState.createMattermostDirectChannel.mockResolvedValue({ id: RESOLVED_DM_CHANNEL_ID });
+
+    const result = await sendMessageMattermost(
+      `channel:${TARGET_USER_ID}__${BOT_ID}`,
+      "hello",
+    );
+
+    expect(mockState.fetchMattermostMe).toHaveBeenCalledTimes(1);
+    expect(mockState.createMattermostDirectChannel).toHaveBeenCalledWith(
+      expect.anything(),
+      [BOT_ID, TARGET_USER_ID],
+    );
+    expect(mockState.createMattermostPost).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ channelId: RESOLVED_DM_CHANNEL_ID }),
+    );
+    expect(result.channelId).toBe(RESOLVED_DM_CHANNEL_ID);
+  });
+
+  it("Invalid RootId — retries once without rootId and succeeds", async () => {
+    mockState.createMattermostPost
+      .mockRejectedValueOnce(
+        new Error("Mattermost API 400 Bad Request: Invalid RootId parameter."),
+      )
+      .mockResolvedValueOnce({ id: "post-1" });
+
+    const result = await sendMessageMattermost("channel:town-square", "hello", {
+      replyToId: "stale-root-id",
+    });
+
+    expect(mockState.createMattermostPost).toHaveBeenCalledTimes(2);
+    // Second call should not include rootId
+    const secondCall = mockState.createMattermostPost.mock.calls[1][1];
+    expect(secondCall).not.toHaveProperty("rootId");
+    expect(result.messageId).toBe("post-1");
+  });
+
+  it("Non-RootId error — propagates without retry", async () => {
+    mockState.createMattermostPost.mockRejectedValue(
+      new Error("Mattermost API 500 Internal Server Error: something broke"),
+    );
+
+    await expect(
+      sendMessageMattermost("channel:town-square", "hello", {
+        replyToId: "some-thread-id",
+      }),
+    ).rejects.toThrow("Mattermost API 500");
+
+    expect(mockState.createMattermostPost).toHaveBeenCalledTimes(1);
   });
 });
