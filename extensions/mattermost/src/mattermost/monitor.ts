@@ -1015,7 +1015,7 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
         ...prefixOptions,
         humanDelay: core.channel.reply.resolveHumanDelayConfig(cfg, route.agentId),
         typingCallbacks,
-        deliver: async (payload: ReplyPayload, info: { kind: string }) => {
+        deliver: async (payload: ReplyPayload, info) => {
           const isFinal = info.kind === "final";
 
           // REASONING SUPPRESSION
@@ -1120,7 +1120,7 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
                   ? !account.config.blockStreaming
                   : undefined),
               onPartialReply: draftStream
-                ? (payload: { text?: string }) => updateDraftFromPartial(payload.text)
+                ? (payload) => updateDraftFromPartial(payload.text)
                 : undefined,
               onAssistantMessageStart: draftStream
                 ? () => {
