@@ -26,6 +26,8 @@ import {
   resolveChannelMediaMaxBytes,
   warnMissingProviderGroupPolicyFallbackOnce,
   listSkillCommandsForAgents,
+  EmbeddedBlockChunker,
+  stripReasoningTagsFromText,
   type HistoryEntry,
 } from "openclaw/plugin-sdk/mattermost";
 import { getMattermostRuntime } from "../runtime.js";
@@ -37,11 +39,13 @@ import {
   fetchMattermostUser,
   fetchMattermostUserTeams,
   normalizeMattermostBaseUrl,
+  patchMattermostPost,
   sendMattermostTyping,
   type MattermostChannel,
   type MattermostPost,
   type MattermostUser,
 } from "./client.js";
+import { createMattermostDraftStream } from "./draft-stream.js";
 import { isMattermostSenderAllowed, normalizeMattermostAllowList } from "./monitor-auth.js";
 import {
   createDedupeCache,
@@ -901,12 +905,165 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
         });
       },
     });
+    // --- Mattermost draft stream (edit-based preview streaming) ---
+    const mattermostStreamMode = account.config.streaming ?? "off";
+    const accountBlockStreamingEnabled =
+      typeof account.config.blockStreaming === "boolean"
+        ? account.config.blockStreaming
+        : cfg.agents?.defaults?.blockStreamingDefault === "on";
+    const canStreamDraft = mattermostStreamMode !== "off" && !accountBlockStreamingEnabled;
+
+    const draftStream = canStreamDraft
+      ? createMattermostDraftStream({
+          client,
+          channelId,
+          maxChars: textLimit,
+          replyToId: threadRootId,
+          minInitialChars: 30,
+          throttleMs: 1000,
+          log: logVerboseMessage,
+          warn: logVerboseMessage,
+        })
+      : undefined;
+
+    const shouldSplitPreviewMessages = mattermostStreamMode === "block";
+    const draftChunker =
+      draftStream && mattermostStreamMode === "block"
+        ? new EmbeddedBlockChunker({ minChars: 200, maxChars: 2000, breakPreference: "paragraph" })
+        : undefined;
+    let lastPartialText = "";
+    let draftText = "";
+    let hasStreamedMessage = false;
+    let finalizedViaPreviewMessage = false;
+
+    const updateDraftFromPartial = (text?: string) => {
+      if (!draftStream || !text) {
+        return;
+      }
+      // Strip reasoning/thinking tags that may leak through the stream.
+      const cleaned = stripReasoningTagsFromText(text, { mode: "strict", trim: "both" });
+      // Skip pure-reasoning messages (e.g. "Reasoning:\n…") that contain no answer text.
+      if (!cleaned || cleaned.startsWith("Reasoning:\n")) {
+        return;
+      }
+      if (cleaned === lastPartialText) {
+        return;
+      }
+      hasStreamedMessage = true;
+      if (mattermostStreamMode === "partial") {
+        // Keep the longer preview to avoid visible punctuation flicker.
+        if (
+          lastPartialText &&
+          lastPartialText.startsWith(cleaned) &&
+          cleaned.length < lastPartialText.length
+        ) {
+          return;
+        }
+        lastPartialText = cleaned;
+        draftStream.update(cleaned);
+        return;
+      }
+
+      let delta = cleaned;
+      if (cleaned.startsWith(lastPartialText)) {
+        delta = cleaned.slice(lastPartialText.length);
+      } else {
+        // Streaming buffer reset (or non-monotonic stream). Start fresh.
+        draftChunker?.reset();
+        draftText = "";
+      }
+      lastPartialText = cleaned;
+      if (!delta) {
+        return;
+      }
+      if (!draftChunker) {
+        draftText = cleaned;
+        draftStream.update(draftText);
+        return;
+      }
+      draftChunker.append(delta);
+      draftChunker.drain({
+        force: false,
+        emit: (chunk: string) => {
+          draftText += chunk;
+          draftStream.update(draftText);
+        },
+      });
+    };
+
+    const flushDraft = async () => {
+      if (!draftStream) {
+        return;
+      }
+      if (draftChunker?.hasBuffered()) {
+        draftChunker.drain({
+          force: true,
+          emit: (chunk: string) => {
+            draftText += chunk;
+          },
+        });
+        draftChunker.reset();
+        if (draftText) {
+          draftStream.update(draftText);
+        }
+      }
+      await draftStream.flush();
+    };
+
     const { dispatcher, replyOptions, markDispatchIdle } =
       core.channel.reply.createReplyDispatcherWithTyping({
         ...prefixOptions,
         humanDelay: core.channel.reply.resolveHumanDelayConfig(cfg, route.agentId),
         typingCallbacks,
-        deliver: async (payload: ReplyPayload) => {
+        deliver: async (payload: ReplyPayload, info: { kind: string }) => {
+          const isFinal = info.kind === "final";
+
+          // REASONING SUPPRESSION
+          if (payload.isReasoning) {
+            return;
+          }
+
+          // PREVIEW FINALIZATION
+          if (draftStream && isFinal) {
+            await flushDraft();
+            const hasMedia =
+              Boolean(payload.mediaUrl) || (payload.mediaUrls?.length ?? 0) > 0;
+            const finalText = payload.text;
+            // Strip reasoning from final text as defense-in-depth.
+            const cleanedFinal = stripReasoningTagsFromText(finalText ?? "", {
+              mode: "strict",
+              trim: "both",
+            });
+            const previewPostId = draftStream.messageId();
+
+            const canFinalize =
+              !finalizedViaPreviewMessage &&
+              !hasMedia &&
+              typeof cleanedFinal === "string" &&
+              cleanedFinal.length > 0 &&
+              cleanedFinal.length <= textLimit &&
+              typeof previewPostId === "string" &&
+              !payload.isError;
+
+            if (canFinalize) {
+              try {
+                await draftStream.stop();
+                await patchMattermostPost(client, previewPostId, { message: cleanedFinal });
+                finalizedViaPreviewMessage = true;
+                return;
+              } catch (err) {
+                logVerboseMessage(
+                  `mattermost: preview final edit failed, falling back: ${String(err)}`,
+                );
+              }
+            }
+
+            // Clear preview and fall through to standard delivery.
+            if (!finalizedViaPreviewMessage) {
+              await draftStream.clear();
+            }
+          }
+
           const mediaUrls = payload.mediaUrls ?? (payload.mediaUrl ? [payload.mediaUrl] : []);
           const text = core.channel.text.convertMarkdownTables(payload.text ?? "", tableMode);
           if (mediaUrls.length === 0) {
@@ -949,18 +1106,56 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
       onSettled: () => {
         markDispatchIdle();
       },
-      run: () =>
-        core.channel.reply.dispatchReplyFromConfig({
-          ctx: ctxPayload,
-          cfg,
-          dispatcher,
-          replyOptions: {
-            ...replyOptions,
-            disableBlockStreaming:
-              typeof account.blockStreaming === "boolean" ? !account.blockStreaming : undefined,
-            onModelSelected,
-          },
-        }),
+      run: async () => {
+        try {
+          await core.channel.reply.dispatchReplyFromConfig({
+            ctx: ctxPayload,
+            cfg,
+            dispatcher,
+            replyOptions: {
+              ...replyOptions,
+              disableBlockStreaming:
+                (canStreamDraft ? true : undefined) ??
+                (typeof account.config.blockStreaming === "boolean"
+                  ? !account.config.blockStreaming
+                  : undefined),
+              onPartialReply: draftStream
+                ? (payload: { text?: string }) => updateDraftFromPartial(payload.text)
+                : undefined,
+              onAssistantMessageStart: draftStream
+                ? () => {
+                    if (shouldSplitPreviewMessages && hasStreamedMessage) {
+                      draftStream.forceNewMessage();
+                    }
+                    lastPartialText = "";
+                    draftText = "";
+                    draftChunker?.reset();
+                  }
+                : undefined,
+              onReasoningEnd: draftStream
+                ? () => {
+                    if (shouldSplitPreviewMessages && hasStreamedMessage) {
+                      draftStream.forceNewMessage();
+                    }
+                    lastPartialText = "";
+                    draftText = "";
+                    draftChunker?.reset();
+                  }
+                : undefined,
+              onModelSelected,
+            },
+          });
+        } finally {
+          try {
+            await draftStream?.stop();
+            if (!finalizedViaPreviewMessage) {
+              await draftStream?.clear();
+            }
+          } catch (err) {
+            logVerboseMessage(`mattermost: draft cleanup failed: ${String(err)}`);
+          }
+        }
+      },
     });
     if (historyKey) {
       clearHistoryEntriesIfEnabled({

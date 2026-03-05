@@ -190,6 +190,26 @@ export async function createMattermostPost(
   });
 }
 
+export async function patchMattermostPost(
+  client: MattermostClient,
+  postId: string,
+  params: { message: string },
+): Promise<MattermostPost> {
+  return await client.request<MattermostPost>(`/posts/${postId}/patch`, {
+    method: "PUT",
+    body: JSON.stringify({ message: params.message }),
+  });
+}
+
+export async function deleteMattermostPost(
+  client: MattermostClient,
+  postId: string,
+): Promise<void> {
+  await client.request<void>(`/posts/${postId}`, {
+    method: "DELETE",
+  });
+}
+
 export type MattermostTeam = {
   id: string;
   name?: string | null;

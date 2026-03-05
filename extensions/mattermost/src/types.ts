@@ -50,6 +50,8 @@ export type MattermostAccountConfig = {
   chunkMode?: "length" | "newline";
   /** Disable block streaming for this account. */
   blockStreaming?: boolean;
+  /** Preview streaming mode: "off" (default), "partial" (single updating message), "block" (chunked updating messages). */
+  streaming?: "off" | "partial" | "block";
   /** Merge streamed block replies before sending. */
   blockStreamingCoalesce?: BlockStreamingCoalesceConfig;
   /** Outbound response prefix override for this channel/account. */

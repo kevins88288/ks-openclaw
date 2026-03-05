@@ -83,3 +83,6 @@ export type { WizardPrompter } from "../wizard/prompts.js";
 export { buildAgentMediaPayload } from "./agent-media-payload.js";
 export { loadOutboundMediaFromUrl } from "./outbound-media.js";
 export { createScopedPairingAccess } from "./pairing-access.js";
+export { createFinalizableDraftLifecycle } from "../channels/draft-stream-controls.js";
+export { EmbeddedBlockChunker } from "../agents/pi-embedded-block-chunker.js";
+export { stripReasoningTagsFromText } from "../shared/text/reasoning-tags.js";
