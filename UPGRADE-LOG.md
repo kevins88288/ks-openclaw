@@ -5,6 +5,84 @@ For each upgrade, document: what changed, what broke, what we fixed, test result
 
 ---
 
+## 2026-03-07 — Upstream merge (latest upstream through `84f5d7dc1d`: Codex 5.4, readiness probes, context engine, Mattermost interactions)
+
+**Upstream range:** merged latest `upstream/main` through `84f5d7dc1d`
+**Merge commit:** `e7abdad561`
+**Merge target:** `feature/mattermost-preview-streaming`
+
+### What changed
+
+- **Codex 5.4 support** — upstream now defaults/docs against `openai-codex/gpt-5.4` and `codex-cli/gpt-5.4`, with forward-compat model catalog wiring and updated OpenAI/Codex auth messaging
+- **Gateway readiness + restart hardening** — readiness probes landed, stale-socket restart logic tightened, bootstrap cache invalidation added, and probe routes stay reachable under root-mounted control UI
+- **Context engine plugin slot** — upstream added `context-engine` plugin support, registration APIs, docs, and related plugin type surface
+- **Mattermost interactions + send improvements** — upstream added interaction callback plumbing, button/send actions, channel-name resolution, directory helpers, and reachable callback URL fixes
+- **Media/reply normalization fixes** — upstream added HEIC handling, reply media normalization hardening, media path cleanup retention, and media cap enforcement for Telegram/Discord/WhatsApp
+- **ACP / subagent / plugin improvements** — parent streaming relay, skill env stripping, request-scope/runtime plumbing, and prompt hook helpers expanded
+- **Android package rename** — Android package moved from `ai.openclaw.android` to `ai.openclaw.app`
+- **Tooling / CI changes** — shallow-fetch helpers, Knip dead-code reporting, install smoke improvements, extra scope-aware CI checks, and secret scan workflow tightening
+
+### Conflicts resolved (7)
+
+1. **`extensions/mattermost/src/mattermost/send.ts`** — kept upstream target/channel-name + `props` support and re-applied our DM-channel-name resolution plus invalid `RootId` retry fallback
+2. **`extensions/mattermost/src/mattermost/monitor.ts`** — kept upstream interaction handler / callback wiring and re-applied our draft preview streaming path
+3. **`extensions/mattermost/src/mattermost/client.test.ts`** — combined upstream client coverage with our patch/delete post coverage
+4. **`extensions/mattermost/src/mattermost/send.test.ts`** — kept upstream parsing coverage and re-applied our DM-channel-name + invalid `RootId` regression tests
+5. **`package.json` / `pnpm-lock.yaml`** — kept our direct `google-auth-library` dependency for GCP ADC and regenerated installs against upstream package state
+6. **`src/agents/transcript-policy.ts`** — preserved our Google + Anthropic thinking-signature immutability fix (`preserveSignatures: isAnthropic || isGoogle`) and kept tool-call-id behavior aligned with the documented fork fix
+7. **`src/plugins/types.ts`** — fixed the merged hook registry completeness list so our `reaction_add` hook remains valid alongside upstream plugin hook helpers
+
+### Patch status
+
+| Patch                               | Status                                                                | Action             |
+| ----------------------------------- | --------------------------------------------------------------------- | ------------------ |
+| `openclaw-gcp-adc.patch`            | Still required; upstream still lacks `gcp-adc` auth mode end-to-end   | Preserved in merge |
+| Google thinking-signature fork fix  | Still required; upstream still regresses Google immutability behavior | Preserved in merge |
+| Mattermost preview-streaming fork   | Still required; upstream adds interactions but not our preview flow   | Preserved in merge |
+| Mattermost DM invalid-root fallback | Still required; upstream send improvements do not cover this retry    | Preserved in merge |
+
+### Post-merge fixes
+
+1. **`send.ts` logger scope regression** — `resolveMattermostSendContext()` needed an explicit logger parameter after merge so DM-channel-name warnings compile correctly
+2. **Plugin hook registry type failure** — added `reaction_add` to `PLUGIN_HOOK_NAMES` so upstream’s completeness assertion passes
+3. **Transcript policy regression** — restored `sanitizeToolCallIds = isMistral || requiresOpenAiCompatibleToolIdSanitization` to preserve the earlier Google/Anthropic immutability fix documented on `2026-02-27`
+4. **GCP ADC test mocking** — updated `google-auth-library` mocks to use constructor-compatible mock implementations under current Vitest behavior
+5. **Mattermost target parsing regression** — restored special handling so DM channel names shaped like `<user>__<user>` stay on the DM-resolution path instead of being reclassified as channel names
+
+### Test results
+
+- **Build:** `pnpm build` passed
+- **Targeted tests passed:**
+  - `extensions/mattermost/src/mattermost/send.test.ts`
+  - `extensions/mattermost/src/mattermost/client.test.ts`
+  - `extensions/mattermost/src/mattermost/monitor.streaming.test.ts`
+  - `src/providers/gcp-adc-token.test.ts`
+  - `src/agents/transcript-policy.test.ts`
+  - `src/agents/model-auth.profiles.test.ts`
+
+### Post-deploy verification
+
+- Gateway restarted twice after the merge for validation
+- Escalated verification confirmed `openclaw-gateway` listening on `127.0.0.1:18789` and `::1:18789`
+- Local TCP connect checks succeeded on both loopback addresses
+- `openclaw channels status --probe` reported `Gateway reachable`
+- Healthy after restart:
+  - Telegram: works
+  - WhatsApp: connected
+  - Mattermost bots: connected and working
+- Existing channel-specific warnings remain:
+  - Discord `default` / `cortex`: `Missing Access` on channel `1471670004771590301`
+  - On the second restart, Discord `cortex` and `quant` were disconnected while gateway health remained good
+
+### Notes
+
+- `HEAD` is now `0` commits behind `upstream/main`
+- The merge commit is `e7abdad561`
+- `.agents/skills/upgrade-upstream/SKILL.md` remains as an unrelated local modification outside the merge commit
+- Local build verification needed a temporary PATH shim for `rolldown` because `scripts/bundle-a2ui.sh` only finds a plain `rolldown` executable on PATH before falling back to `pnpm dlx`
+
+---
+
 ## 2026-03-04 — Upstream merge (v2026.3.3: plugin-SDK scoped imports, ACP dispatch default-on, iOS Live Activity)
 
 **Upstream range:** 10 commits merged

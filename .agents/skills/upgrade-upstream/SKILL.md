@@ -1,3 +1,10 @@
+---
+name: upgrade-upstream
+description: Merge upstream OpenClaw changes into the ks-openclaw fork safely, preserving local customizations and reviewing upstream end-state before integration.
+metadata:
+  short-description: Safe workflow for syncing this fork with upstream OpenClaw
+---
+
 # Upgrade Upstream — Safe Fork Merge Workflow
 
 Merge upstream OpenClaw changes into the ks-openclaw fork safely, preserving local customizations.
