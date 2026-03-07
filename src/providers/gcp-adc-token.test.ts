@@ -2,11 +2,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock google-auth-library - must be before imports
 vi.mock("google-auth-library", () => ({
-  GoogleAuth: vi.fn().mockImplementation(() => ({
-    getClient: vi.fn().mockResolvedValue({
-      getAccessToken: vi.fn().mockResolvedValue("mock-gcp-token-12345"),
-    }),
-  })),
+  GoogleAuth: vi.fn().mockImplementation(function () {
+    return {
+      getClient: vi.fn().mockResolvedValue({
+        getAccessToken: vi.fn().mockResolvedValue("mock-gcp-token-12345"),
+      }),
+    };
+  }),
 }));
 
 // Mock file system - must be before imports
@@ -137,11 +139,13 @@ describe("resolveGcpAdcToken", () => {
   it("throws error when google-auth-library returns no token", async () => {
     const { GoogleAuth } = await import("google-auth-library");
     // @ts-expect-error - mocking implementation override
-    GoogleAuth.mockImplementationOnce(() => ({
-      getClient: vi.fn().mockResolvedValue({
-        getAccessToken: vi.fn().mockResolvedValue(null),
-      }),
-    }));
+    GoogleAuth.mockImplementationOnce(function () {
+      return {
+        getClient: vi.fn().mockResolvedValue({
+          getAccessToken: vi.fn().mockResolvedValue(null),
+        }),
+      };
+    });
     mockLoadJsonFile.mockReturnValue(undefined);
 
     await expect(resolveGcpAdcToken()).rejects.toThrow("Failed to obtain GCP ADC access token");
