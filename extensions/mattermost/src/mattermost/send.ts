@@ -54,6 +54,13 @@ const userByNameCache = new Map<string, MattermostUser>();
 const channelByNameCache = new Map<string, string>();
 const dmChannelCache = new Map<string, string>();
 
+export function resetMattermostSendCachesForTests(): void {
+  botUserCache.clear();
+  userByNameCache.clear();
+  channelByNameCache.clear();
+  dmChannelCache.clear();
+}
+
 const getCore = () => getMattermostRuntime();
 
 function cacheKey(baseUrl: string, token: string): string {

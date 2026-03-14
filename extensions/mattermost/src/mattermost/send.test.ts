@@ -3,7 +3,7 @@ import {
   expectProvidedCfgSkipsRuntimeLoad,
   expectRuntimeCfgFallback,
 } from "../../../test-utils/send-config.js";
-import { parseMattermostTarget, sendMessageMattermost } from "./send.js";
+import { parseMattermostTarget, resetMattermostSendCachesForTests, sendMessageMattermost } from "./send.js";
 import { resetMattermostOpaqueTargetCacheForTests } from "./target-resolution.js";
 
 const mockState = vi.hoisted(() => ({
@@ -89,6 +89,7 @@ describe("sendMessageMattermost", () => {
     mockState.fetchMattermostUserByUsername.mockReset();
     mockState.uploadMattermostFile.mockReset();
     resetMattermostOpaqueTargetCacheForTests();
+    resetMattermostSendCachesForTests();
     mockState.createMattermostClient.mockReturnValue({});
     mockState.createMattermostPost.mockResolvedValue({ id: "post-1" });
     mockState.fetchMattermostMe.mockResolvedValue({ id: "bot-user" });
