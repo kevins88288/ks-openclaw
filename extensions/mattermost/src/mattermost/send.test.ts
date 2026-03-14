@@ -4,8 +4,8 @@ import {
   expectRuntimeCfgFallback,
 } from "../../../test-utils/send-config.js";
 import {
-  _testOnly_clearBotUserCache,
   parseMattermostTarget,
+  resetMattermostSendCachesForTests,
   sendMessageMattermost,
 } from "./send.js";
 import { resetMattermostOpaqueTargetCacheForTests } from "./target-resolution.js";
@@ -94,6 +94,7 @@ describe("sendMessageMattermost", () => {
     mockState.fetchMattermostUserByUsername.mockReset();
     mockState.uploadMattermostFile.mockReset();
     resetMattermostOpaqueTargetCacheForTests();
+    resetMattermostSendCachesForTests();
     mockState.createMattermostClient.mockReturnValue({});
     mockState.createMattermostPost.mockResolvedValue({ id: "post-1" });
     mockState.fetchMattermostMe.mockResolvedValue({ id: "bot-user" });
