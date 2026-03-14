@@ -10,6 +10,7 @@ import { shouldSkipRespawnForArgv } from "./cli/respawn-policy.js";
 import { normalizeWindowsArgv } from "./cli/windows-argv.js";
 import { isTruthyEnvValue, normalizeEnv } from "./infra/env.js";
 import { isMainModule } from "./infra/is-main.js";
+import { ensureOpenClawExecMarkerOnProcess } from "./infra/openclaw-exec-env.js";
 import { installProcessWarningFilter } from "./infra/warning-filter.js";
 import { attachChildProcessBridge } from "./process/child-process-bridge.js";
 
@@ -49,6 +50,7 @@ if (
   // Imported as a dependency — skip all entry-point side effects.
 } else {
   process.title = "openclaw";
+  ensureOpenClawExecMarkerOnProcess();
   installProcessWarningFilter();
   normalizeEnv();
   if (!isTruthyEnvValue(process.env.NODE_DISABLE_COMPILE_CACHE)) {
@@ -135,9 +137,11 @@ if (
     if (!isRootVersionInvocation(argv)) {
       return false;
     }
-    import("./version.js")
-      .then(({ VERSION }) => {
-        console.log(VERSION);
+    Promise.all([import("./version.js"), import("./infra/git-commit.js")])
+      .then(([{ VERSION }, { resolveCommitHash }]) => {
+        const commit = resolveCommitHash({ moduleUrl: import.meta.url });
+        console.log(commit ? `OpenClaw ${VERSION} (${commit})` : `OpenClaw ${VERSION}`);
+        process.exit(0);
       })
       .catch((error) => {
         console.error(

@@ -14,6 +14,13 @@ import {
   type MattermostPost,
   type MattermostUser,
 } from "./client.js";
+import {
+  buildButtonProps,
+  resolveInteractionCallbackUrl,
+  setInteractionSecret,
+  type MattermostInteractiveButtonInput,
+} from "./interactions.js";
+import { isMattermostId, resolveMattermostOpaqueTarget } from "./target-resolution.js";
 
 export type MattermostSendOpts = {
   cfg?: OpenClawConfig;
@@ -24,12 +31,18 @@ export type MattermostSendOpts = {
   mediaLocalRoots?: readonly string[];
   replyToId?: string;
   props?: Record<string, unknown>;
+  buttons?: Array<unknown>;
+  attachmentText?: string;
 };
 
 export type MattermostSendResult = {
   messageId: string;
   channelId: string;
 };
+
+export type MattermostReplyButtons = Array<
+  MattermostInteractiveButtonInput | MattermostInteractiveButtonInput[]
+>;
 
 type MattermostTarget =
   | { kind: "channel"; id: string }
@@ -39,6 +52,7 @@ type MattermostTarget =
 const botUserCache = new Map<string, MattermostUser>();
 const userByNameCache = new Map<string, MattermostUser>();
 const channelByNameCache = new Map<string, string>();
+const dmChannelCache = new Map<string, string>();
 
 const getCore = () => getMattermostRuntime();
 
@@ -54,11 +68,6 @@ function normalizeMessage(text: string, mediaUrl?: string): string {
 
 function isHttpUrl(value: string): boolean {
   return /^https?:\/\//i.test(value);
-}
-
-/** Mattermost IDs are 26-character lowercase alphanumeric strings. */
-function isMattermostId(value: string): boolean {
-  return /^[a-z0-9]{26}$/.test(value);
 }
 
 const DM_CHANNEL_NAME_RE = /^([a-z0-9]{26})__([a-z0-9]{26})$/i;
@@ -230,14 +239,19 @@ async function resolveTargetChannelId(params: {
         token: params.token,
         username: params.target.username ?? "",
       });
-  return resolveDmChannelId(params, userId);
-}
-
-/** @internal — test-only, clears bot user cache between test runs */
-export function _testOnly_clearBotUserCache(): void {
-  botUserCache.clear();
-  userByNameCache.clear();
-  channelByNameCache.clear();
+  const dmKey = `${cacheKey(params.baseUrl, params.token)}::dm::${userId}`;
+  const cachedDm = dmChannelCache.get(dmKey);
+  if (cachedDm) {
+    return cachedDm;
+  }
+  const botUser = await resolveBotUser(params.baseUrl, params.token);
+  const client = createMattermostClient({
+    baseUrl: params.baseUrl,
+    botToken: params.token,
+  });
+  const channel = await createMattermostDirectChannel(client, [botUser.id, userId]);
+  dmChannelCache.set(dmKey, channel.id);
+  return channel.id;
 }
 
 type MattermostSendContext = {
@@ -272,7 +286,18 @@ async function resolveMattermostSendContext(
     );
   }
 
-  const target = parseMattermostTarget(to);
+  const trimmedTo = to?.trim() ?? "";
+  const opaqueTarget = await resolveMattermostOpaqueTarget({
+    input: trimmedTo,
+    token,
+    baseUrl,
+  });
+  const target =
+    opaqueTarget?.kind === "user"
+      ? { kind: "user" as const, id: opaqueTarget.id }
+      : opaqueTarget?.kind === "channel"
+        ? { kind: "channel" as const, id: opaqueTarget.id }
+        : parseMattermostTarget(trimmedTo);
   const channelId = await resolveTargetChannelId({
     target,
     baseUrl,
@@ -310,6 +335,23 @@ export async function sendMessageMattermost(
   );
 
   const client = createMattermostClient({ baseUrl, botToken: token });
+  let props = opts.props;
+  if (!props && Array.isArray(opts.buttons) && opts.buttons.length > 0) {
+    setInteractionSecret(accountId, token);
+    props = buildButtonProps({
+      callbackUrl: resolveInteractionCallbackUrl(accountId, {
+        gateway: cfg.gateway,
+        interactions: resolveMattermostAccount({
+          cfg,
+          accountId,
+        }).config?.interactions,
+      }),
+      accountId,
+      channelId,
+      buttons: opts.buttons,
+      text: opts.attachmentText,
+    });
+  }
   let message = text?.trim() ?? "";
   let fileIds: string[] | undefined;
   let uploadError: Error | undefined;
@@ -360,7 +402,7 @@ export async function sendMessageMattermost(
       message,
       rootId: opts.replyToId,
       fileIds,
-      props: opts.props,
+      props,
     });
   } catch (err) {
     if (
@@ -376,7 +418,7 @@ export async function sendMessageMattermost(
         channelId,
         message,
         fileIds,
-        props: opts.props,
+        props,
       });
     } else {
       throw err;

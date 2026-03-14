@@ -11,6 +11,7 @@ import {
 } from "../../infra/outbound/outbound-session.js";
 import { normalizeReplyPayloadsForDelivery } from "../../infra/outbound/payloads.js";
 import { buildOutboundSessionContext } from "../../infra/outbound/session-context.js";
+import { maybeResolveIdLikeTarget } from "../../infra/outbound/target-resolver.js";
 import { resolveOutboundTarget } from "../../infra/outbound/targets.js";
 import { normalizePollInput } from "../../polls.js";
 import {
@@ -190,6 +191,13 @@ export const sendHandlers: GatewayRequestHandlers = {
             meta: { channel },
           };
         }
+        const idLikeTarget = await maybeResolveIdLikeTarget({
+          cfg,
+          channel,
+          input: resolved.to,
+          accountId,
+        });
+        const deliveryTarget = idLikeTarget?.to ?? resolved.to;
         const outboundDeps = context.deps ? createOutboundSendDeps(context.deps) : undefined;
         const mirrorPayloads = normalizeReplyPayloadsForDelivery([
           { text: message, mediaUrl, mediaUrls },
@@ -221,7 +229,9 @@ export const sendHandlers: GatewayRequestHandlers = {
               channel,
               agentId: effectiveAgentId,
               accountId,
-              target: resolved.to,
+              target: deliveryTarget,
+              resolvedTarget: idLikeTarget,
+              threadId,
             })
           : null;
         if (derivedRoute) {
@@ -245,7 +255,7 @@ export const sendHandlers: GatewayRequestHandlers = {
         const results = await deliverOutboundPayloads({
           cfg,
           channel: outboundChannel,
-          to: resolved.to,
+          to: deliveryTarget,
           accountId,
           payloads: [{ text: message, mediaUrl, mediaUrls }],
           session: outboundSession,
@@ -258,6 +268,7 @@ export const sendHandlers: GatewayRequestHandlers = {
                 agentId: effectiveAgentId,
                 text: mirrorText || message,
                 mediaUrls: mirrorMediaUrls.length > 0 ? mirrorMediaUrls : undefined,
+                idempotencyKey: idem,
               }
             : derivedRoute
               ? {
@@ -265,6 +276,7 @@ export const sendHandlers: GatewayRequestHandlers = {
                   agentId: effectiveAgentId,
                   text: mirrorText || message,
                   mediaUrls: mirrorMediaUrls.length > 0 ? mirrorMediaUrls : undefined,
+                  idempotencyKey: idem,
                 }
               : undefined,
         });

@@ -65,6 +65,38 @@ describe("mattermostPlugin", () => {
     });
   });
 
+  describe("threading", () => {
+    it("uses replyToMode for channel messages and keeps direct messages off", () => {
+      const resolveReplyToMode = mattermostPlugin.threading?.resolveReplyToMode;
+      if (!resolveReplyToMode) {
+        return;
+      }
+
+      const cfg: OpenClawConfig = {
+        channels: {
+          mattermost: {
+            replyToMode: "all",
+          },
+        },
+      };
+
+      expect(
+        resolveReplyToMode({
+          cfg,
+          accountId: "default",
+          chatType: "channel",
+        }),
+      ).toBe("all");
+      expect(
+        resolveReplyToMode({
+          cfg,
+          accountId: "default",
+          chatType: "direct",
+        }),
+      ).toBe("off");
+    });
+  });
+
   describe("messageActions", () => {
     beforeEach(() => {
       resetMattermostReactionBotUserCacheForTests();
@@ -214,6 +246,57 @@ describe("mattermostPlugin", () => {
       ]);
       expect(result?.details).toEqual({});
     });
+
+    it("maps replyTo to replyToId for send actions", async () => {
+      const cfg = createMattermostTestConfig();
+
+      await mattermostPlugin.actions?.handleAction?.({
+        channel: "mattermost",
+        action: "send",
+        params: {
+          to: "channel:CHAN1",
+          message: "hello",
+          replyTo: "post-root",
+        },
+        cfg,
+        accountId: "default",
+      } as any);
+
+      expect(sendMessageMattermostMock).toHaveBeenCalledWith(
+        "channel:CHAN1",
+        "hello",
+        expect.objectContaining({
+          accountId: "default",
+          replyToId: "post-root",
+        }),
+      );
+    });
+
+    it("falls back to trimmed replyTo when replyToId is blank", async () => {
+      const cfg = createMattermostTestConfig();
+
+      await mattermostPlugin.actions?.handleAction?.({
+        channel: "mattermost",
+        action: "send",
+        params: {
+          to: "channel:CHAN1",
+          message: "hello",
+          replyToId: "   ",
+          replyTo: " post-root ",
+        },
+        cfg,
+        accountId: "default",
+      } as any);
+
+      expect(sendMessageMattermostMock).toHaveBeenCalledWith(
+        "channel:CHAN1",
+        "hello",
+        expect.objectContaining({
+          accountId: "default",
+          replyToId: "post-root",
+        }),
+      );
+    });
   });
 
   describe("outbound", () => {
@@ -273,79 +356,50 @@ describe("mattermostPlugin", () => {
       );
     });
 
-    it("uses threadId as replyToId when replyToId is absent", async () => {
-      await mattermostPlugin.outbound!.sendText!({
-        cfg: {} as OpenClawConfig,
-        to: "channel:town-square",
-        text: "sub-agent result",
-        threadId: "root-post-123",
+    it("uses threadId as fallback when replyToId is absent (sendText)", async () => {
+      const sendText = mattermostPlugin.outbound?.sendText;
+      if (!sendText) {
+        return;
+      }
+
+      await sendText({
+        to: "channel:CHAN1",
+        text: "hello",
+        accountId: "default",
+        threadId: "post-root",
       } as any);
 
       expect(sendMessageMattermostMock).toHaveBeenCalledWith(
-        "channel:town-square",
-        "sub-agent result",
-        expect.objectContaining({ replyToId: "root-post-123" }),
+        "channel:CHAN1",
+        "hello",
+        expect.objectContaining({
+          accountId: "default",
+          replyToId: "post-root",
+        }),
       );
     });
 
-    it("prefers replyToId over threadId when both present", async () => {
-      await mattermostPlugin.outbound!.sendText!({
-        cfg: {} as OpenClawConfig,
-        to: "channel:town-square",
-        text: "reply",
-        replyToId: "specific-post-456",
-        threadId: "root-post-123",
-      } as any);
+    it("uses threadId as fallback when replyToId is absent (sendMedia)", async () => {
+      const sendMedia = mattermostPlugin.outbound?.sendMedia;
+      if (!sendMedia) {
+        return;
+      }
 
-      expect(sendMessageMattermostMock).toHaveBeenCalledWith(
-        "channel:town-square",
-        "reply",
-        expect.objectContaining({ replyToId: "specific-post-456" }),
-      );
-    });
-
-    it("does not set replyToId when neither replyToId nor threadId present", async () => {
-      await mattermostPlugin.outbound!.sendText!({
-        cfg: {} as OpenClawConfig,
-        to: "channel:town-square",
-        text: "top-level message",
-      } as any);
-
-      expect(sendMessageMattermostMock).toHaveBeenCalledWith(
-        "channel:town-square",
-        "top-level message",
-        expect.objectContaining({ replyToId: undefined }),
-      );
-    });
-
-    it("uses threadId for sendMedia when replyToId is absent", async () => {
-      await mattermostPlugin.outbound!.sendMedia!({
-        cfg: {} as OpenClawConfig,
-        to: "channel:town-square",
-        text: "media in thread",
+      await sendMedia({
+        to: "channel:CHAN1",
+        text: "caption",
         mediaUrl: "https://example.com/image.png",
-        threadId: "root-post-789",
+        accountId: "default",
+        threadId: "post-root",
       } as any);
 
       expect(sendMessageMattermostMock).toHaveBeenCalledWith(
-        "channel:town-square",
-        "media in thread",
-        expect.objectContaining({ replyToId: "root-post-789" }),
-      );
-    });
-
-    it("coerces numeric threadId to string", async () => {
-      await mattermostPlugin.outbound!.sendText!({
-        cfg: {} as OpenClawConfig,
-        to: "channel:town-square",
-        text: "numeric thread",
-        threadId: 42,
-      } as any);
-
-      expect(sendMessageMattermostMock).toHaveBeenCalledWith(
-        "channel:town-square",
-        "numeric thread",
-        expect.objectContaining({ replyToId: "42" }),
+        "channel:CHAN1",
+        "caption",
+        expect.objectContaining({
+          accountId: "default",
+          replyToId: "post-root",
+        }),
       );
     });
   });

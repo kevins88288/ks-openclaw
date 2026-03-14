@@ -6,6 +6,7 @@ import {
   requireOpenAllowFrom,
 } from "openclaw/plugin-sdk/mattermost";
 import { z } from "zod";
+import { requireChannelOpenAllowFrom } from "../../shared/config-schema-helpers.js";
 import { buildSecretInputSchema } from "./secret-input.js";
 
 const MattermostSlashCommandsSchema = z
@@ -44,6 +45,7 @@ const MattermostAccountSchemaBase = z
     blockStreaming: z.boolean().optional(),
     streaming: z.enum(["off", "partial", "block"]).optional(),
     blockStreamingCoalesce: BlockStreamingCoalesceSchema.optional(),
+    replyToMode: z.enum(["off", "first", "all"]).optional(),
     responsePrefix: z.string().optional(),
     actions: z
       .object({
@@ -54,19 +56,19 @@ const MattermostAccountSchemaBase = z
     interactions: z
       .object({
         callbackBaseUrl: z.string().optional(),
+        allowedSourceIps: z.array(z.string()).optional(),
       })
       .optional(),
   })
   .strict();
 
 const MattermostAccountSchema = MattermostAccountSchemaBase.superRefine((value, ctx) => {
-  requireOpenAllowFrom({
+  requireChannelOpenAllowFrom({
+    channel: "mattermost",
     policy: value.dmPolicy,
     allowFrom: value.allowFrom,
     ctx,
-    path: ["allowFrom"],
-    message:
-      'channels.mattermost.dmPolicy="open" requires channels.mattermost.allowFrom to include "*"',
+    requireOpenAllowFrom,
   });
 });
 
@@ -74,12 +76,11 @@ export const MattermostConfigSchema = MattermostAccountSchemaBase.extend({
   accounts: z.record(z.string(), MattermostAccountSchema.optional()).optional(),
   defaultAccount: z.string().optional(),
 }).superRefine((value, ctx) => {
-  requireOpenAllowFrom({
+  requireChannelOpenAllowFrom({
+    channel: "mattermost",
     policy: value.dmPolicy,
     allowFrom: value.allowFrom,
     ctx,
-    path: ["allowFrom"],
-    message:
-      'channels.mattermost.dmPolicy="open" requires channels.mattermost.allowFrom to include "*"',
+    requireOpenAllowFrom,
   });
 });

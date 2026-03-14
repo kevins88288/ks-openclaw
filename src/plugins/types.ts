@@ -1,12 +1,17 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { Command } from "commander";
-import type { AuthProfileCredential, OAuthCredential } from "../agents/auth-profiles/types.js";
+import type {
+  ApiKeyCredential,
+  AuthProfileCredential,
+  OAuthCredential,
+} from "../agents/auth-profiles/types.js";
 import type { AnyAgentTool } from "../agents/tools/common.js";
 import type { ReplyPayload } from "../auto-reply/types.js";
 import type { ChannelDock } from "../channels/dock.js";
 import type { ChannelId, ChannelPlugin } from "../channels/plugins/types.js";
 import type { createVpsAwareOAuthHandlers } from "../commands/oauth-flow.js";
+import type { OnboardOptions } from "../commands/onboard-types.js";
 import type { OpenClawConfig } from "../config/config.js";
 import type { ModelProviderConfig } from "../config/types.js";
 import type { GatewayRequestHandler } from "../gateway/server-methods/types.js";
@@ -113,24 +118,122 @@ export type ProviderAuthContext = {
   };
 };
 
+export type ProviderNonInteractiveApiKeyResult = {
+  key: string;
+  source: "profile" | "env" | "flag";
+  envVarName?: string;
+};
+
+export type ProviderResolveNonInteractiveApiKeyParams = {
+  provider: string;
+  flagValue?: string;
+  flagName: `--${string}`;
+  envVar: string;
+  envVarName?: string;
+  allowProfile?: boolean;
+  required?: boolean;
+};
+
+export type ProviderNonInteractiveApiKeyCredentialParams = {
+  provider: string;
+  resolved: ProviderNonInteractiveApiKeyResult;
+  email?: string;
+  metadata?: Record<string, string>;
+};
+
+export type ProviderAuthMethodNonInteractiveContext = {
+  authChoice: string;
+  config: OpenClawConfig;
+  baseConfig: OpenClawConfig;
+  opts: OnboardOptions;
+  runtime: RuntimeEnv;
+  agentDir?: string;
+  workspaceDir?: string;
+  resolveApiKey: (
+    params: ProviderResolveNonInteractiveApiKeyParams,
+  ) => Promise<ProviderNonInteractiveApiKeyResult | null>;
+  toApiKeyCredential: (
+    params: ProviderNonInteractiveApiKeyCredentialParams,
+  ) => ApiKeyCredential | null;
+};
+
 export type ProviderAuthMethod = {
   id: string;
   label: string;
   hint?: string;
   kind: ProviderAuthKind;
   run: (ctx: ProviderAuthContext) => Promise<ProviderAuthResult>;
+  runNonInteractive?: (
+    ctx: ProviderAuthMethodNonInteractiveContext,
+  ) => Promise<OpenClawConfig | null>;
+};
+
+export type ProviderDiscoveryOrder = "simple" | "profile" | "paired" | "late";
+
+export type ProviderDiscoveryContext = {
+  config: OpenClawConfig;
+  agentDir?: string;
+  workspaceDir?: string;
+  env: NodeJS.ProcessEnv;
+  resolveProviderApiKey: (providerId?: string) => {
+    apiKey: string | undefined;
+    discoveryApiKey?: string;
+  };
+};
+
+export type ProviderDiscoveryResult =
+  | { provider: ModelProviderConfig }
+  | { providers: Record<string, ModelProviderConfig> }
+  | null
+  | undefined;
+
+export type ProviderPluginDiscovery = {
+  order?: ProviderDiscoveryOrder;
+  run: (ctx: ProviderDiscoveryContext) => Promise<ProviderDiscoveryResult>;
+};
+
+export type ProviderPluginWizardOnboarding = {
+  choiceId?: string;
+  choiceLabel?: string;
+  choiceHint?: string;
+  groupId?: string;
+  groupLabel?: string;
+  groupHint?: string;
+  methodId?: string;
+};
+
+export type ProviderPluginWizardModelPicker = {
+  label?: string;
+  hint?: string;
+  methodId?: string;
+};
+
+export type ProviderPluginWizard = {
+  onboarding?: ProviderPluginWizardOnboarding;
+  modelPicker?: ProviderPluginWizardModelPicker;
+};
+
+export type ProviderModelSelectedContext = {
+  config: OpenClawConfig;
+  model: string;
+  prompter: WizardPrompter;
+  agentDir?: string;
+  workspaceDir?: string;
 };
 
 export type ProviderPlugin = {
   id: string;
+  pluginId?: string;
   label: string;
   docsPath?: string;
   aliases?: string[];
   envVars?: string[];
-  models?: ModelProviderConfig;
   auth: ProviderAuthMethod[];
+  discovery?: ProviderPluginDiscovery;
+  wizard?: ProviderPluginWizard;
   formatApiKey?: (cred: AuthProfileCredential) => string;
   refreshOAuth?: (cred: OAuthCredential) => Promise<OAuthCredential>;
+  onModelSelected?: (ctx: ProviderModelSelectedContext) => Promise<void>;
 };
 
 export type OpenClawPluginGatewayMethod = {
@@ -188,6 +291,12 @@ export type PluginCommandHandler = (
 export type OpenClawPluginCommandDefinition = {
   /** Command name without leading slash (e.g., "tts") */
   name: string;
+  /**
+   * Optional native-command aliases for slash/menu surfaces.
+   * `default` applies to all native providers unless a provider-specific
+   * override exists (for example `{ default: "talkvoice", discord: "voice2" }`).
+   */
+  nativeNames?: Partial<Record<string, string>> & { default?: string };
   /** Description shown in /help and command menus */
   description: string;
   /** Whether this command accepts arguments */
@@ -338,8 +447,7 @@ export type PluginHookName =
   | "subagent_spawned"
   | "subagent_ended"
   | "gateway_start"
-  | "gateway_stop"
-  | "reaction_add";
+  | "gateway_stop";
 
 export const PLUGIN_HOOK_NAMES = [
   "before_model_resolve",
@@ -366,7 +474,6 @@ export const PLUGIN_HOOK_NAMES = [
   "subagent_ended",
   "gateway_start",
   "gateway_stop",
-  "reaction_add",
 ] as const satisfies readonly PluginHookName[];
 
 type MissingPluginHookNames = Exclude<PluginHookName, (typeof PLUGIN_HOOK_NAMES)[number]>;
@@ -771,33 +878,6 @@ export type PluginHookGatewayContext = {
   port?: number;
 };
 
-// reaction_add context
-export type PluginHookReactionContext = {
-  channelType: string;
-  accountId?: string;
-  guildId?: string;
-};
-
-// reaction_add event
-export type PluginHookReactionAddEvent = {
-  /** The emoji that was reacted — raw Unicode for standard emoji, "<:name:id>" for custom emoji */
-  emoji: string;
-  /** Discord user ID of the reactor */
-  userId: string;
-  /** Discord username of the reactor */
-  userName?: string;
-  /** Channel where the reaction was added */
-  channelId: string;
-  /** Message that was reacted to */
-  messageId: string;
-  /** Guild ID (undefined for DMs) */
-  guildId?: string;
-  /** Whether the reactor is a bot */
-  isBot: boolean;
-  /** Whether this is a reaction add or remove event */
-  reaction_type: "add" | "remove";
-};
-
 // gateway_start hook
 export type PluginHookGatewayStartEvent = {
   port: number;
@@ -905,10 +985,6 @@ export type PluginHookHandlerMap = {
   gateway_stop: (
     event: PluginHookGatewayStopEvent,
     ctx: PluginHookGatewayContext,
-  ) => Promise<void> | void;
-  reaction_add: (
-    event: PluginHookReactionAddEvent,
-    ctx: PluginHookReactionContext,
   ) => Promise<void> | void;
 };
 
