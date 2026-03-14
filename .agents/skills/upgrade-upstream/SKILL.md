@@ -385,6 +385,7 @@ Keep this updated after each merge. These are the files we've modified from upst
 - [ ] All fork customizations preserved
 - [ ] `pnpm build` succeeds
 - [ ] `pnpm test` passes (or known failures documented)
+- [ ] Secret refs validated: `grep -r "tokenRef" ~/.openclaw/agents/*/agent/auth-profiles.json` — verify every referenced secret exists in `~/.secrets/openclaw-secrets.json` (see UPGRADE-LOG.md 2026-03-13 incident)
 - [ ] Version number updated
 - [ ] Pushed to origin
 - [ ] Gateway restarted (when Kevin confirms)
