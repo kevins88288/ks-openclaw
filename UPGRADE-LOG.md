@@ -74,6 +74,32 @@ For each upgrade, document: what changed, what broke, what we fixed, test result
   - Discord `default` / `cortex`: `Missing Access` on channel `1471670004771590301`
   - On the second restart, Discord `cortex` and `quant` were disconnected while gateway health remained good
 
+### Post-merge incident: Gateway crash-loop (2026-03-13)
+
+**Symptom:** Gateway crash-looping since ~Mar 12 20:33 UTC (restart counter at 4734). Every restart exited with code 1 within ~3s.
+
+**Error:**
+
+```
+[SECRETS_RELOADER_DEGRADED] SecretRefResolutionError: JSON pointer segment "anthropic_k@eq" does not exist.
+Gateway failed to start: Error: Startup failed: required secrets are unavailable.
+```
+
+**Root cause (two-part):**
+
+1. **Upstream merge made secret validation fatal at startup.** The merge commit `e7abdad561` brought changes to `src/gateway/server.impl.ts` that made unresolved secret references throw during startup (line 389-392: `if (params.reason === "startup") throw`). Previously, `SECRETS_RELOADER_DEGRADED` was a non-fatal warning — the gateway kept running despite the missing secret (confirmed: warning logged since Mar 9 without crashing).
+
+2. **Stale auth profile referenced a missing secret.** All 18 agent `auth-profiles.json` files contained an `anthropic:k@eq` credential profile with a `tokenRef` pointing to `/auth/anthropic_k@eq` in the secrets file. That key didn't exist in `~/.secrets/openclaw-secrets.json`. The profile was added during a Mar 9 debugging session and never cleaned up.
+
+**Why the watchdog didn't help:** The systemd service (`Restart=always`, `RestartSec=5`) was working correctly — but the error was a configuration problem, not a transient crash. Every restart hit the same missing secret and exited immediately.
+
+**Fix:** Removed the stale `anthropic:k@eq` and `anthropic:manual` profiles from all 18 agent `auth-profiles.json` files using a Python script to batch-edit them. Gateway restarted successfully after the fix.
+
+**Lesson:** After any upstream merge, check whether new validation strictness (fatal-on-startup vs warning) will surface pre-existing config issues. Specifically:
+
+- **Before restarting the gateway after a merge:** grep all `auth-profiles.json` files for `tokenRef` entries and verify each referenced secret exists in the secrets file.
+- **Add to post-merge checklist:** `grep -r "tokenRef" ~/.openclaw/agents/*/agent/auth-profiles.json` and cross-check against `~/.secrets/openclaw-secrets.json`.
+
 ### Notes
 
 - `HEAD` is now `0` commits behind `upstream/main`
@@ -308,6 +334,7 @@ Initially tried `cd ~/workspace/openclaw && git pull` expecting code changes. Th
 - [x] Both patches applied cleanly
 - [x] Plugin hooks firing (redis-events stream populating)
 - [x] Gateway stable
+- [ ] Verify all secret refs resolve: `grep -r "tokenRef" ~/.openclaw/agents/*/agent/auth-profiles.json` cross-checked against `~/.secrets/openclaw-secrets.json`
 - [ ] (Future upgrades: add checklist results here)
 
 ### Learnings

@@ -9,6 +9,8 @@ description: Host security hardening and risk-tolerance configuration for OpenCl
 
 Assess and harden the host running OpenClaw, then align it to a user-defined risk tolerance without breaking access. Use OpenClaw security tooling as a first-class signal, but treat OS hardening as a separate, explicit set of steps.
 
+> **Note:** Gateway process monitoring is handled separately by Watchdog v2 (`~/workspace/openclaw/scripts/gateway-watchdog.sh`). This skill focuses on host security hardening.
+
 ## Core rules
 
 - Recommend running this skill with a state-of-the-art model (e.g., Opus 4.5, GPT 5.2+). The agent should self-check the current model and suggest switching if below that level; do not block execution.
