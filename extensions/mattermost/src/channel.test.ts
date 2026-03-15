@@ -97,6 +97,46 @@ describe("mattermostPlugin", () => {
     });
   });
 
+  describe("threading buildToolContext", () => {
+    it("populates tool context from message thread or reply context", () => {
+      const buildToolContext = mattermostPlugin.threading?.buildToolContext;
+      expect(buildToolContext).toBeDefined();
+
+      const result = buildToolContext!({
+        context: {
+          To: "ch-abc123",
+          MessageThreadId: "root-post-1",
+          ReplyToId: "fallback-post",
+        } as any,
+        hasRepliedRef: { value: false },
+      });
+
+      expect(result).toEqual({
+        currentChannelId: "ch-abc123",
+        currentThreadTs: "root-post-1",
+        hasRepliedRef: { value: false },
+      });
+    });
+
+    it("falls back to ReplyToId when MessageThreadId is absent", () => {
+      const buildToolContext = mattermostPlugin.threading?.buildToolContext;
+
+      const result = buildToolContext!({
+        context: {
+          To: "ch-abc123",
+          ReplyToId: "fallback-post",
+        } as any,
+        hasRepliedRef: undefined,
+      });
+
+      expect(result).toEqual({
+        currentChannelId: "ch-abc123",
+        currentThreadTs: "fallback-post",
+        hasRepliedRef: undefined,
+      });
+    });
+  });
+
   describe("messageActions", () => {
     beforeEach(() => {
       resetMattermostReactionBotUserCacheForTests();
