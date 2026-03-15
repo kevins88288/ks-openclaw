@@ -71,6 +71,33 @@ export function resolveTelegramAutoThreadId(params: {
   return context.currentThreadTs;
 }
 
+/**
+ * Auto-inject Mattermost thread ID when the message tool targets the same
+ * channel the session originated from.  Mirrors the Telegram auto-threading
+ * pattern — no replyToMode gating because Mattermost threads are persistent.
+ */
+export function resolveMattermostAutoThreadId(params: {
+  to: string;
+  toolContext?: ChannelThreadingToolContext;
+}): string | undefined {
+  const context = params.toolContext;
+  if (!context?.currentThreadTs || !context.currentChannelId) {
+    return undefined;
+  }
+  // Strip mattermost:/channel:/user: prefixes for ID comparison.
+  // We do not use parseMattermostTarget here because it throws on empty
+  // input and returns heterogeneous field names (id vs name vs username),
+  // making it unsuitable for simple channel-ID equality checks.
+  const strip = (v: string) =>
+    v.replace(/^(?:mattermost:(?:channel:|user:)?|(?:channel|user):)/i, "").trim();
+  const targetId = strip(params.to);
+  const contextId = strip(context.currentChannelId);
+  if (targetId.toLowerCase() !== contextId.toLowerCase()) {
+    return undefined;
+  }
+  return context.currentThreadTs;
+}
+
 function resolveAttachmentMaxBytes(params: {
   cfg: OpenClawConfig;
   channel: ChannelId;

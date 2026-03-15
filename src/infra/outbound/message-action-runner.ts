@@ -35,6 +35,7 @@ import {
   parseComponentsParam,
   readBooleanParam,
   resolveAttachmentMediaPolicy,
+  resolveMattermostAutoThreadId,
   resolveSlackAutoThreadId,
   resolveTelegramAutoThreadId,
 } from "./message-action-params.js";
@@ -78,7 +79,11 @@ function resolveAndApplyOutboundThreadId(
     ctx.channel === "telegram" && !threadId
       ? resolveTelegramAutoThreadId({ to: ctx.to, toolContext: ctx.toolContext })
       : undefined;
-  const resolved = threadId ?? slackAutoThreadId ?? telegramAutoThreadId;
+  const mattermostAutoThreadId =
+    ctx.channel === "mattermost" && !threadId
+      ? resolveMattermostAutoThreadId({ to: ctx.to, toolContext: ctx.toolContext })
+      : undefined;
+  const resolved = threadId ?? slackAutoThreadId ?? telegramAutoThreadId ?? mattermostAutoThreadId;
   // Write auto-resolved threadId back into params so downstream dispatch
   // (plugin `readStringParam(params, "threadId")`) picks it up.
   if (resolved && !params.threadId) {

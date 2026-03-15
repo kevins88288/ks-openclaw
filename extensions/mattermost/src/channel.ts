@@ -283,6 +283,14 @@ export const mattermostPlugin: ChannelPlugin<ResolvedMattermostAccount> = {
           : "channel";
       return resolveMattermostReplyToMode(account, kind);
     },
+    buildToolContext: ({ context, hasRepliedRef }) => {
+      const threadId = context.MessageThreadId ?? context.ReplyToId;
+      return {
+        currentChannelId: context.To?.trim() || undefined,
+        currentThreadTs: threadId != null ? String(threadId) : undefined,
+        hasRepliedRef,
+      };
+    },
   },
   reload: { configPrefixes: ["channels.mattermost"] },
   configSchema: buildChannelConfigSchema(MattermostConfigSchema),

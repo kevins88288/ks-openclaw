@@ -9,6 +9,7 @@ import {
   normalizeSandboxMediaList,
   normalizeSandboxMediaParams,
   resolveAttachmentMediaPolicy,
+  resolveMattermostAutoThreadId,
   resolveSlackAutoThreadId,
   resolveTelegramAutoThreadId,
 } from "./message-action-params.js";
@@ -68,6 +69,56 @@ describe("message action threading helpers", () => {
     expect(
       resolveSlackAutoThreadId({
         to: "C123",
+        toolContext: createToolContext({ currentThreadTs: undefined }),
+      }),
+    ).toBeUndefined();
+  });
+
+  it("resolves Mattermost auto-thread ids for matching channels with prefix stripping", () => {
+    // Use a PREFIXED currentChannelId to verify symmetric stripping works
+    const mmContext = createToolContext({
+      currentChannelId: "channel:ch123abc",
+      currentThreadTs: "root-post-1",
+    });
+    // bare ID → prefixed context
+    expect(resolveMattermostAutoThreadId({ to: "ch123abc", toolContext: mmContext })).toBe(
+      "root-post-1",
+    );
+    // channel: prefix → prefixed context
+    expect(resolveMattermostAutoThreadId({ to: "channel:ch123abc", toolContext: mmContext })).toBe(
+      "root-post-1",
+    );
+    // user: prefix → prefixed context
+    expect(resolveMattermostAutoThreadId({ to: "user:ch123abc", toolContext: mmContext })).toBe(
+      "root-post-1",
+    );
+    // mattermost:channel: prefix
+    expect(
+      resolveMattermostAutoThreadId({ to: "mattermost:channel:ch123abc", toolContext: mmContext }),
+    ).toBe("root-post-1");
+    // mattermost: bare prefix (no sub-prefix)
+    expect(
+      resolveMattermostAutoThreadId({ to: "mattermost:ch123abc", toolContext: mmContext }),
+    ).toBe("root-post-1");
+    // case-insensitive matching
+    expect(
+      resolveMattermostAutoThreadId({
+        to: "CHANNEL:CH123ABC",
+        toolContext: createToolContext({
+          currentChannelId: "channel:ch123abc",
+          currentThreadTs: "root-post-1",
+        }),
+      }),
+    ).toBe("root-post-1");
+    // mismatched channel
+    expect(
+      resolveMattermostAutoThreadId({ to: "other-channel", toolContext: mmContext }),
+    ).toBeUndefined();
+    // missing context
+    expect(resolveMattermostAutoThreadId({ to: "ch123abc" })).toBeUndefined();
+    expect(
+      resolveMattermostAutoThreadId({
+        to: "ch123abc",
         toolContext: createToolContext({ currentThreadTs: undefined }),
       }),
     ).toBeUndefined();
