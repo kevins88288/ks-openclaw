@@ -240,6 +240,29 @@ describe("config plugin validation", () => {
     expect(res.ok).toBe(true);
   });
 
+  it("warns for missing plugin ids in allow/deny/slots (resilient)", async () => {
+    const home = await createCaseHome();
+    const res = validateInHome(home, {
+      agents: { list: [{ id: "pi" }] },
+      plugins: {
+        enabled: false,
+        allow: ["missing-allow"],
+        deny: ["missing-deny"],
+        slots: { memory: "missing-slot" },
+      },
+    });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.warnings).toEqual(
+        expect.arrayContaining([
+          { path: "plugins.allow", message: expect.stringContaining("missing-allow") },
+          { path: "plugins.deny", message: expect.stringContaining("missing-deny") },
+          { path: "plugins.slots.memory", message: expect.stringContaining("missing-slot") },
+        ]),
+      );
+    }
+  });
+
   it("warns for removed legacy plugin ids instead of failing validation", async () => {
     const removedId = "google-antigravity-auth";
     const res = validateInSuite({
