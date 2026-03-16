@@ -2,6 +2,18 @@ import { createEmptyPluginRegistry, type PluginRegistry } from "./registry.js";
 
 const REGISTRY_STATE = Symbol.for("openclaw.pluginRegistryState");
 
+/**
+ * Plugin HTTP route registry pinning lifecycle:
+ *
+ * 1. Gateway startup:  `createGatewayRuntimeState` pins the initial registry.
+ * 2. Per-message loads: `setActivePluginRegistry` updates `registry` but leaves
+ *    `httpRouteRegistry` untouched while pinned, preventing per-turn route churn.
+ * 3. Config reload / restart: the new registry is pinned FIRST (swap), then the
+ *    old registry is released (no-op because the reference no longer matches).
+ *    This eliminates any window where HTTP requests would see an empty route table.
+ * 4. Gateway close: the release closure fires; if no new pin replaced it, the
+ *    registry unpins and falls back to `state.registry`.
+ */
 type RegistryState = {
   registry: PluginRegistry | null;
   httpRouteRegistry: PluginRegistry | null;
@@ -50,11 +62,27 @@ export function requireActivePluginRegistry(): PluginRegistry {
   return state.registry;
 }
 
+/**
+ * Pin a plugin registry as the authoritative HTTP route source.
+ *
+ * Safe to call while already pinned — the new registry overwrites the previous
+ * pin immediately.  This enables "swap-then-release" semantics during config
+ * reload: pin the NEW registry first (routes switch instantly), then release the
+ * old one (which becomes a no-op because the registry reference no longer matches).
+ */
 export function pinActivePluginHttpRouteRegistry(registry: PluginRegistry) {
   state.httpRouteRegistry = registry;
   state.httpRouteRegistryPinned = true;
 }
 
+/**
+ * Release a previously pinned HTTP route registry.
+ *
+ * If `registry` is provided and does not match the currently pinned registry,
+ * the call is a no-op.  This is the expected outcome after swap-then-release:
+ * the new pin already replaced the old reference, so releasing the old one
+ * has no effect on the active route table.
+ */
 export function releasePinnedPluginHttpRouteRegistry(registry?: PluginRegistry) {
   if (registry && state.httpRouteRegistry !== registry) {
     return;
