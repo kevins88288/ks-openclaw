@@ -94,6 +94,23 @@ describe("config plugin validation", () => {
   const validateInSuite = (raw: unknown) =>
     validateConfigObjectWithPlugins(raw, { env: suiteEnv() });
 
+  const createCaseHome = async () => {
+    const home = path.join(fixtureRoot, `case-${Date.now()}`);
+    await mkdirSafe(home);
+    return home;
+  };
+  const validateInHome = (home: string, raw: unknown) =>
+    validateConfigObjectWithPlugins(raw, {
+      env: {
+        ...process.env,
+        HOME: home,
+        OPENCLAW_HOME: undefined,
+        OPENCLAW_STATE_DIR: path.join(home, ".openclaw"),
+        CLAWDBOT_STATE_DIR: undefined,
+        OPENCLAW_PLUGIN_MANIFEST_CACHE_MS: "10000",
+      } satisfies NodeJS.ProcessEnv,
+    });
+
   beforeAll(async () => {
     fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-config-plugin-validation-"));
     await chmodSafeDir(fixtureRoot);

@@ -98,23 +98,22 @@ function createSecurePluginRouteHandler(params: {
   prefixGatewayHandler: () => boolean | Promise<boolean>;
 }) {
   return createGatewayPluginRequestHandler({
-    getRegistry: () =>
-      createTestRegistry({
-        httpRoutes: [
-          createRoute({
-            path: "/plugin/secure/report",
-            match: "exact",
-            auth: "plugin",
-            handler: params.exactPluginHandler,
-          }),
-          createRoute({
-            path: "/plugin/secure",
-            match: "prefix",
-            auth: "gateway",
-            handler: params.prefixGatewayHandler,
-          }),
-        ],
-      }),
+    registry: createTestRegistry({
+      httpRoutes: [
+        createRoute({
+          path: "/plugin/secure/report",
+          match: "exact",
+          auth: "plugin",
+          handler: params.exactPluginHandler,
+        }),
+        createRoute({
+          path: "/plugin/secure",
+          match: "prefix",
+          auth: "gateway",
+          handler: params.prefixGatewayHandler,
+        }),
+      ],
+    }),
     log: createPluginLog(),
   });
 }
@@ -160,19 +159,18 @@ describe("createGatewayPluginRequestHandler", () => {
     const subagent = await createSubagentRuntime();
     const log = createPluginLog();
     const handler = createGatewayPluginRequestHandler({
-      getRegistry: () =>
-        createTestRegistry({
-          httpRoutes: [
-            createRoute({
-              path: "/hook",
-              auth: "plugin",
-              handler: async (_req, _res) => {
-                await subagent.deleteSession({ sessionKey: "agent:main:subagent:child" });
-                return true;
-              },
-            }),
-          ],
-        }),
+      registry: createTestRegistry({
+        httpRoutes: [
+          createRoute({
+            path: "/hook",
+            auth: "plugin",
+            handler: async (_req, _res) => {
+              await subagent.deleteSession({ sessionKey: "agent:main:subagent:child" });
+              return true;
+            },
+          }),
+        ],
+      }),
       log,
     });
 
@@ -195,7 +193,7 @@ describe("createGatewayPluginRequestHandler", () => {
   it("returns false when no routes are registered", async () => {
     const log = createPluginLog();
     const handler = createGatewayPluginRequestHandler({
-      getRegistry: () => createTestRegistry(),
+      registry: createTestRegistry(),
       log,
     });
     const { res } = makeMockHttpResponse();
@@ -208,10 +206,9 @@ describe("createGatewayPluginRequestHandler", () => {
       res.statusCode = 200;
     });
     const handler = createGatewayPluginRequestHandler({
-      getRegistry: () =>
-        createTestRegistry({
-          httpRoutes: [createRoute({ path: "/demo", handler: routeHandler })],
-        }),
+      registry: createTestRegistry({
+        httpRoutes: [createRoute({ path: "/demo", handler: routeHandler })],
+      }),
       log: createPluginLog(),
     });
 
@@ -227,13 +224,12 @@ describe("createGatewayPluginRequestHandler", () => {
     });
     const prefixHandler = vi.fn(async () => true);
     const handler = createGatewayPluginRequestHandler({
-      getRegistry: () =>
-        createTestRegistry({
-          httpRoutes: [
-            createRoute({ path: "/api", match: "prefix", handler: prefixHandler }),
-            createRoute({ path: "/api/demo", match: "exact", handler: exactHandler }),
-          ],
-        }),
+      registry: createTestRegistry({
+        httpRoutes: [
+          createRoute({ path: "/api", match: "prefix", handler: prefixHandler }),
+          createRoute({ path: "/api/demo", match: "exact", handler: exactHandler }),
+        ],
+      }),
       log: createPluginLog(),
     });
 
@@ -248,13 +244,12 @@ describe("createGatewayPluginRequestHandler", () => {
     const first = vi.fn(async () => false);
     const second = vi.fn(async () => true);
     const handler = createGatewayPluginRequestHandler({
-      getRegistry: () =>
-        createTestRegistry({
-          httpRoutes: [
-            createRoute({ path: "/hook", match: "exact", handler: first }),
-            createRoute({ path: "/hook", match: "prefix", handler: second }),
-          ],
-        }),
+      registry: createTestRegistry({
+        httpRoutes: [
+          createRoute({ path: "/hook", match: "exact", handler: first }),
+          createRoute({ path: "/hook", match: "prefix", handler: second }),
+        ],
+      }),
       log: createPluginLog(),
     });
 
@@ -288,10 +283,9 @@ describe("createGatewayPluginRequestHandler", () => {
       res.statusCode = 200;
     });
     const handler = createGatewayPluginRequestHandler({
-      getRegistry: () =>
-        createTestRegistry({
-          httpRoutes: [createRoute({ path: "/api/demo", handler: routeHandler })],
-        }),
+      registry: createTestRegistry({
+        httpRoutes: [createRoute({ path: "/api/demo", handler: routeHandler })],
+      }),
       log: createPluginLog(),
     });
 
@@ -398,17 +392,16 @@ describe("createGatewayPluginRequestHandler", () => {
   it("logs and responds with 500 when a route throws", async () => {
     const log = createPluginLog();
     const handler = createGatewayPluginRequestHandler({
-      getRegistry: () =>
-        createTestRegistry({
-          httpRoutes: [
-            createRoute({
-              path: "/boom",
-              handler: async () => {
-                throw new Error("boom");
-              },
-            }),
-          ],
-        }),
+      registry: createTestRegistry({
+        httpRoutes: [
+          createRoute({
+            path: "/boom",
+            handler: async () => {
+              throw new Error("boom");
+            },
+          }),
+        ],
+      }),
       log,
     });
 

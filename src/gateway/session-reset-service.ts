@@ -31,7 +31,10 @@ import {
 } from "./session-utils.js";
 
 const ACP_RUNTIME_CLEANUP_TIMEOUT_MS = 15_000;
-const channelRuntime = createPluginRuntime().channel;
+let _channelRuntime: ReturnType<typeof createPluginRuntime>["channel"];
+function getChannelRuntime() {
+  return (_channelRuntime ??= createPluginRuntime().channel);
+}
 
 function stripRuntimeModelState(entry?: SessionEntry): SessionEntry | undefined {
   if (!entry) {
@@ -71,7 +74,7 @@ export async function emitSessionUnboundLifecycleEvent(params: {
   emitHooks?: boolean;
 }) {
   const targetKind = isSubagentSessionKey(params.targetSessionKey) ? "subagent" : "acp";
-  channelRuntime.discord.threadBindings.unbindBySessionKey({
+  getChannelRuntime().discord.threadBindings.unbindBySessionKey({
     targetSessionKey: params.targetSessionKey,
     targetKind,
     reason: params.reason,

@@ -226,7 +226,15 @@ describe("provider discovery contract", () => {
             providers: {
               ollama: {
                 baseUrl: "http://ollama-host:11434/v1/",
-                models: [{ id: "llama3.2", name: "llama3.2" }],
+                models: [{
+                  id: "llama3.2",
+                  name: "llama3.2",
+                  reasoning: false,
+                  input: ["text"],
+                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                  contextWindow: 8192,
+                  maxTokens: 4096,
+                }],
               },
             },
           },
@@ -239,7 +247,15 @@ describe("provider discovery contract", () => {
         baseUrl: "http://ollama-host:11434",
         api: "ollama",
         apiKey: "ollama-local",
-        models: [{ id: "llama3.2", name: "llama3.2" }],
+        models: [{
+          id: "llama3.2",
+          name: "llama3.2",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 8192,
+          maxTokens: 4096,
+        }],
       },
     });
     expect(buildOllamaProviderMock).not.toHaveBeenCalled();
@@ -405,6 +421,7 @@ describe("provider discovery contract", () => {
               "minimax-portal": {
                 baseUrl: "https://portal-proxy.example.com/anthropic",
                 apiKey: "explicit-key",
+                models: [],
               },
             },
           },
@@ -431,6 +448,7 @@ describe("provider discovery contract", () => {
             providers: {
               modelstudio: {
                 baseUrl: "https://coding.dashscope.aliyuncs.com/v1",
+                models: [],
               },
             },
           },

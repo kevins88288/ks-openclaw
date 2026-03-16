@@ -104,6 +104,7 @@ describe("mattermostPlugin", () => {
       expect(buildToolContext).toBeDefined();
 
       const result = buildToolContext!({
+        cfg: {} as OpenClawConfig,
         context: {
           To: "ch-abc123",
           MessageThreadId: "root-post-1",
@@ -123,6 +124,7 @@ describe("mattermostPlugin", () => {
       const buildToolContext = mattermostPlugin.threading?.buildToolContext;
 
       const result = buildToolContext!({
+        cfg: {} as OpenClawConfig,
         context: {
           To: "ch-abc123",
           ReplyToId: "fallback-post",

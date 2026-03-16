@@ -233,7 +233,7 @@ describe("sanitizeSessionHistory", () => {
       sessionId: TEST_SESSION_ID,
     });
 
-    expect(helpers.sanitizeSessionMessagesImages).toHaveBeenCalledWith(
+    expect(mockedHelpers.sanitizeSessionMessagesImages).toHaveBeenCalledWith(
       mockMessages,
       "session:history",
       expect.objectContaining({

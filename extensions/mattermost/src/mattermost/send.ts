@@ -265,6 +265,7 @@ async function resolveMattermostSendContext(
   opts: MattermostSendOpts = {},
 ): Promise<MattermostSendContext> {
   const core = getCore();
+  const logger = core.logging.getChildLogger({ module: "mattermost" });
   const cfg = opts.cfg ?? core.config.loadConfig();
   const account = resolveMattermostAccount({
     cfg,
@@ -299,7 +300,9 @@ async function resolveMattermostSendContext(
     target,
     baseUrl,
     token,
-    logger,
+    logger: {
+      warn: (...args: unknown[]) => logger.warn(String(args[0] ?? ""), args[1] as Record<string, unknown> | undefined),
+    },
   });
 
   return {

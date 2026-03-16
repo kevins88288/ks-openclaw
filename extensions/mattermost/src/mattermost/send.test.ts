@@ -4,6 +4,7 @@ import {
   expectRuntimeCfgFallback,
 } from "../../../test-utils/send-config.js";
 import {
+  _testOnly_clearBotUserCache,
   parseMattermostTarget,
   resetMattermostSendCachesForTests,
   sendMessageMattermost,
