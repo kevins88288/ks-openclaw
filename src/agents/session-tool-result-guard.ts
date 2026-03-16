@@ -160,7 +160,7 @@ export function installSessionToolResultGuard(
       const msg = (entry as { message?: { role?: string; stopReason?: string } }).message;
       if (msg?.role === "assistant") {
         if (!msg.stopReason) {
-          pending.clear();
+          pendingState.clear();
           return;
         }
         break;
