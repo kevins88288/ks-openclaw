@@ -83,6 +83,8 @@ export type OpenClawPluginToolContext = {
   requesterSenderId?: string;
   /** Whether the trusted sender is an owner. */
   senderIsOwner?: boolean;
+  messageTo?: string;
+  agentThreadId?: string | number;
   sandboxed?: boolean;
 };
 
