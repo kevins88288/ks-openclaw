@@ -108,6 +108,8 @@ export type {
   PluginInteractiveSlackHandlerContext,
   PluginInteractiveTelegramHandlerContext,
   PluginLogger,
+  PluginHookReactionAddEvent,
+  PluginHookReactionContext,
   ProviderAuthContext,
   ProviderAuthDoctorHintContext,
   ProviderAuthResult,
