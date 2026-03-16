@@ -519,6 +519,7 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
 
   // ─── Interactive buttons registration ──────────────────────────────────────
   // Derive a stable HMAC secret from the bot token so CLI and gateway share it.
+  runtime.log?.(`mattermost: [DEBUG] interaction registration starting for ${account.accountId}`);
   setInteractionSecret(account.accountId, botToken);
 
   // Register HTTP callback endpoint for interactive button clicks.
@@ -555,6 +556,9 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
   const effectiveInteractionSourceIps =
     allowedInteractionSourceIps.length > 0 ? allowedInteractionSourceIps : ["127.0.0.1", "::1"];
 
+  runtime.log?.(
+    `mattermost: [DEBUG] registering interaction route at ${interactionPath} callbackUrl=${callbackUrl}`,
+  );
   const unregisterInteractions = registerPluginHttpRoute({
     path: interactionPath,
     fallbackPath: "/mattermost/interactions/default",
