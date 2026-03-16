@@ -22,6 +22,7 @@ import { MattermostConfigSchema } from "./config-schema.js";
 import { resolveMattermostGroupRequireMention } from "./group-mentions.js";
 import {
   listMattermostAccountIds,
+  MATTERMOST_DEFAULT_CHUNK_LIMIT,
   resolveDefaultMattermostAccountId,
   resolveMattermostAccount,
   resolveMattermostReplyToMode,
@@ -280,6 +281,14 @@ export const mattermostPlugin: ChannelPlugin<ResolvedMattermostAccount> = {
           : "channel";
       return resolveMattermostReplyToMode(account, kind);
     },
+    buildToolContext: ({ context, hasRepliedRef }) => {
+      const threadId = context.MessageThreadId ?? context.ReplyToId;
+      return {
+        currentChannelId: context.To?.trim() || undefined,
+        currentThreadTs: threadId != null ? String(threadId) : undefined,
+        hasRepliedRef,
+      };
+    },
   },
   reload: { configPrefixes: ["channels.mattermost"] },
   configSchema: buildChannelConfigSchema(MattermostConfigSchema),
@@ -374,7 +383,7 @@ export const mattermostPlugin: ChannelPlugin<ResolvedMattermostAccount> = {
     deliveryMode: "direct",
     chunker: (text, limit) => getMattermostRuntime().channel.text.chunkMarkdownText(text, limit),
     chunkerMode: "markdown",
-    textChunkLimit: 4000,
+    textChunkLimit: MATTERMOST_DEFAULT_CHUNK_LIMIT,
     resolveTarget: ({ to }) => {
       const trimmed = to?.trim();
       if (!trimmed) {
@@ -388,10 +397,11 @@ export const mattermostPlugin: ChannelPlugin<ResolvedMattermostAccount> = {
       return { ok: true, to: trimmed };
     },
     sendText: async ({ cfg, to, text, accountId, replyToId, threadId }) => {
+      const effectiveReplyToId = replyToId ?? (threadId ? String(threadId) : undefined);
       const result = await sendMessageMattermost(to, text, {
         cfg,
         accountId: accountId ?? undefined,
-        replyToId: replyToId ?? (threadId != null ? String(threadId) : undefined),
+        replyToId: effectiveReplyToId,
       });
       return { channel: "mattermost", ...result };
     },
@@ -405,12 +415,13 @@ export const mattermostPlugin: ChannelPlugin<ResolvedMattermostAccount> = {
       replyToId,
       threadId,
     }) => {
+      const effectiveReplyToId = replyToId ?? (threadId ? String(threadId) : undefined);
       const result = await sendMessageMattermost(to, text, {
         cfg,
         accountId: accountId ?? undefined,
         mediaUrl,
         mediaLocalRoots,
-        replyToId: replyToId ?? (threadId != null ? String(threadId) : undefined),
+        replyToId: effectiveReplyToId,
       });
       return { channel: "mattermost", ...result };
     },

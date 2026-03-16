@@ -39,6 +39,7 @@ import {
   parseInteractiveParam,
   readBooleanParam,
   resolveAttachmentMediaPolicy,
+  resolveMattermostAutoThreadId,
 } from "./message-action-params.js";
 import type { MessagePollResult, MessageSendResult } from "./message.js";
 import {
@@ -73,15 +74,20 @@ function resolveAndApplyOutboundThreadId(
   },
 ): string | undefined {
   const threadId = readStringParam(params, "threadId");
-  const resolved =
-    threadId ??
-    getChannelPlugin(ctx.channel)?.threading?.resolveAutoThreadId?.({
-      cfg: ctx.cfg,
-      accountId: ctx.accountId,
-      to: ctx.to,
-      toolContext: ctx.toolContext,
-      replyToId: readStringParam(params, "replyTo"),
-    });
+  const pluginAutoThreadId = !threadId
+    ? getChannelPlugin(ctx.channel)?.threading?.resolveAutoThreadId?.({
+        cfg: ctx.cfg,
+        accountId: ctx.accountId,
+        to: ctx.to,
+        toolContext: ctx.toolContext,
+        replyToId: readStringParam(params, "replyTo"),
+      })
+    : undefined;
+  const mattermostAutoThreadId =
+    ctx.channel === "mattermost" && !threadId
+      ? resolveMattermostAutoThreadId({ to: ctx.to, toolContext: ctx.toolContext })
+      : undefined;
+  const resolved = threadId ?? pluginAutoThreadId ?? mattermostAutoThreadId;
   // Write auto-resolved threadId back into params so downstream dispatch
   // (plugin `readStringParam(params, "threadId")`) picks it up.
   if (resolved && !params.threadId) {
