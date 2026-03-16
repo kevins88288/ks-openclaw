@@ -303,6 +303,62 @@
 - Plugin scope: only publish already-on-npm `@openclaw/*` plugins. Bundled disk-tree-only plugins stay out.
 - Maintainers: private 1Password item names, tmux rules, plugin publish helpers, and local mac signing/notary setup live in the private [maintainer release docs](https://github.com/openclaw/maintainers/blob/main/release/README.md).
 
+## Local Patches (Alfred Deployment)
+
+> These patches are maintained in `~/workspace/openclaw/patches/` and must be re-applied after every upstream pull. See `UPGRADE-LOG.md` for history of upgrades and patch outcomes.
+
+| Patch                                   | File                                      | What it fixes                                                                                 |
+| --------------------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `openclaw-hook-runner-fix.patch`        | `src/plugins/loader.ts`                   | Cache-hit path skips `initializeGlobalHookRunner()`, breaking all hooks after SIGUSR1 restart |
+| `openclaw-gcp-adc.patch`                | `src/config/zod-schema.core.ts`           | Adds `gcp-adc` as valid auth type for GCP Application Default Credentials                     |
+| `openclaw-failover-crash-fix.patch`     | `src/infra/unhandled-rejections.ts`       | Gateway crashes on FailoverError (auth 403, rate limit) instead of continuing                 |
+| `openclaw-session-corruption-fix.patch` | `src/agents/session-tool-result-guard.ts` | Mid-stream auth error creates orphaned synthetic tool results corrupting sessions             |
+
+**Re-apply command:**
+
+```bash
+git apply ~/workspace/openclaw/patches/openclaw-hook-runner-fix.patch
+git apply ~/workspace/openclaw/patches/openclaw-gcp-adc.patch
+git apply ~/workspace/openclaw/patches/openclaw-failover-crash-fix.patch
+git apply ~/workspace/openclaw/patches/openclaw-session-corruption-fix.patch
+pnpm build
+```
+
+**If a patch fails:** Check `~/workspace/openclaw/patches/README.md` for manual fallback instructions.
+
+**Deployment config:** `~/workspace/openclaw/` — see that directory’s `CLAUDE.md` for Alfred identity, memory system, and channel config.
+
+---
+
+## NPM + 1Password (publish/verify)
+
+- Use the 1password skill; all `op` commands must run inside a fresh tmux session.
+- Sign in: `eval "$(op signin --account my.1password.com)"` (app unlocked + integration on).
+- OTP: `op read ‘op://Private/Npmjs/one-time password?attribute=otp’`.
+- Publish: `npm publish --access public --otp="<otp>"` (run from the package dir).
+- Verify without local npmrc side effects: `npm view <pkg> version --userconfig "$(mktemp)"`.
+- Kill the tmux session after publish.
+
+## Plugin Release Fast Path (no core `openclaw` publish)
+
+- Release only already-on-npm plugins. Source list is in `docs/reference/RELEASING.md` under "Current npm plugin list".
+- Run all CLI `op` calls and `npm publish` inside tmux to avoid hangs/interruption:
+  - `tmux new -d -s release-plugins-$(date +%Y%m%d-%H%M%S)`
+  - `eval "$(op signin --account my.1password.com)"`
+- 1Password helpers:
+  - password used by `npm login`:
+    `op item get Npmjs --format=json | jq -r ‘.fields[] | select(.id=="password").value’`
+  - OTP:
+    `op read ‘op://Private/Npmjs/one-time password?attribute=otp’`
+- Fast publish loop (local helper script in `/tmp` is fine; keep repo clean):
+  - compare local plugin `version` to `npm view <name> version`
+  - only run `npm publish --access public --otp="<otp>"` when versions differ
+  - skip if package is missing on npm or version already matches.
+- Keep `openclaw` untouched: never run publish from repo root unless explicitly requested.
+- Post-check for each release:
+  - per-plugin: `npm view @openclaw/<name> version --userconfig "$(mktemp)"` should be `2026.2.17`
+  - core guard: `npm view openclaw version --userconfig "$(mktemp)"` should stay at previous version unless explicitly requested.
+
 ## Changelog Release Notes
 
 - When cutting a mac release with beta GitHub prerelease:
