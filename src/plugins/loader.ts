@@ -322,8 +322,22 @@ function buildCacheKey(params: {
   onlyPluginIds?: string[];
   includeSetupOnlyChannelPlugins?: boolean;
 }): string {
+  // Normalize workspaceDir so that different string representations of the same
+  // physical directory (symlinks, ".." segments, trailing slashes) produce the
+  // same cache key.  This prevents per-message cache misses that trigger
+  // redundant plugin register() calls.
+  const normalizedWorkspace = params.workspaceDir
+    ? (() => {
+        const resolved = path.resolve(params.workspaceDir);
+        try {
+          return fs.realpathSync(resolved);
+        } catch {
+          return resolved;
+        }
+      })()
+    : undefined;
   const { roots, loadPaths } = resolvePluginCacheInputs({
-    workspaceDir: params.workspaceDir,
+    workspaceDir: normalizedWorkspace,
     loadPaths: params.plugins.loadPaths,
     env: params.env,
   });
@@ -804,7 +818,6 @@ export function loadOpenClawPlugins(options: PluginLoadOptions = {}): PluginRegi
     if (cached) {
       if (shouldActivate) {
         activatePluginRegistry(cached, cacheKey);
-        initializeGlobalHookRunner(cached);
       }
       return cached;
     }
