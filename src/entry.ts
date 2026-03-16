@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
+import dns from "node:dns";
 import { enableCompileCache } from "node:module";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -42,6 +43,14 @@ if (
   // Imported as a dependency — skip all entry-point side effects.
 } else {
   process.title = "openclaw";
+
+  // Force IPv4-first DNS resolution globally.  Many cloud VMs (e.g. GCP) lack
+  // IPv6 connectivity.  When a provider API (Anthropic, OpenAI, etc.) resolves
+  // to an IPv6 address the connection fails with ENETUNREACH and crashes the
+  // gateway.  `ipv4first` tries A records before AAAA, so IPv4 is preferred but
+  // IPv6 still works on hosts that support it.
+  dns.setDefaultResultOrder("ipv4first");
+
   ensureOpenClawExecMarkerOnProcess();
   installProcessWarningFilter();
   normalizeEnv();
