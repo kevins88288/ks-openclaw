@@ -14,6 +14,7 @@ import {
   normalizeOptionalAccountId,
 } from "../routing/session-key.js";
 import type { RuntimeEnv } from "../runtime.js";
+import { sleep } from "../utils.js";
 
 const CHANNEL_RESTART_POLICY: BackoffPolicy = {
   initialMs: 5_000,
@@ -438,9 +439,15 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
     );
   };
 
+  const CHANNEL_START_STAGGER_MS = 200;
+
   const startChannels = async () => {
-    for (const plugin of listChannelPlugins()) {
-      await startChannel(plugin.id);
+    const plugins = listChannelPlugins();
+    for (let i = 0; i < plugins.length; i++) {
+      if (i > 0) {
+        await sleep(CHANNEL_START_STAGGER_MS);
+      }
+      await startChannel(plugins[i].id);
     }
   };
 
