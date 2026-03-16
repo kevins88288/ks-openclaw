@@ -225,7 +225,7 @@ describe("sanitizeSessionHistory", () => {
   it("passes simple user-only history through for Anthropic APIs", async () => {
     setNonGoogleModelApi();
 
-    const result = await sanitizeSessionHistory({
+    await sanitizeSessionHistory({
       messages: mockMessages,
       modelApi: "anthropic-messages",
       provider: "anthropic",
@@ -233,7 +233,15 @@ describe("sanitizeSessionHistory", () => {
       sessionId: TEST_SESSION_ID,
     });
 
-    expect(result).toEqual(mockMessages);
+    expect(helpers.sanitizeSessionMessagesImages).toHaveBeenCalledWith(
+      mockMessages,
+      "session:history",
+      expect.objectContaining({
+        sanitizeMode: "full",
+        sanitizeToolCallIds: false,
+        preserveSignatures: true,
+      }),
+    );
   });
 
   it("passes simple user-only history through for openai-responses", async () => {

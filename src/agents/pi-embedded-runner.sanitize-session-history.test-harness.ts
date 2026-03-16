@@ -127,6 +127,26 @@ export function expectOpenAIResponsesStrictSanitizeCall(
   );
 }
 
+export async function expectGoogleModelApiFullSanitizeCall(params: {
+  sanitizeSessionHistory: SanitizeSessionHistoryFn;
+  messages: AgentMessage[];
+  sessionManager: SessionManager;
+}) {
+  vi.mocked(helpers.isGoogleModelApi).mockReturnValue(true);
+  await params.sanitizeSessionHistory({
+    messages: params.messages,
+    modelApi: "google-generative-ai",
+    provider: "google-vertex",
+    sessionManager: params.sessionManager,
+    sessionId: TEST_SESSION_ID,
+  });
+  expect(helpers.sanitizeSessionMessagesImages).toHaveBeenCalledWith(
+    params.messages,
+    "session:history",
+    expect.objectContaining({ sanitizeMode: "full", sanitizeToolCallIds: false }),
+  );
+}
+
 export function makeSnapshotChangedOpenAIReasoningScenario() {
   const sessionEntries = [
     makeModelSnapshotEntry({

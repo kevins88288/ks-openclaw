@@ -2,23 +2,26 @@ import { describe, expect, it } from "vitest";
 import { resolveTranscriptPolicy } from "./transcript-policy.js";
 
 describe("resolveTranscriptPolicy", () => {
-  it("enables sanitizeToolCallIds for Anthropic provider", () => {
+  it("preserves signatures and disables tool-id rewriting for Anthropic provider", () => {
     const policy = resolveTranscriptPolicy({
       provider: "anthropic",
       modelId: "claude-opus-4-5",
       modelApi: "anthropic-messages",
     });
-    expect(policy.sanitizeToolCallIds).toBe(true);
-    expect(policy.toolCallIdMode).toBe("strict");
+    expect(policy.sanitizeToolCallIds).toBe(false);
+    expect(policy.toolCallIdMode).toBeUndefined();
+    expect(policy.preserveSignatures).toBe(true);
   });
 
-  it("enables sanitizeToolCallIds for Google provider", () => {
+  it("preserves signatures and disables tool-id rewriting for Google provider", () => {
     const policy = resolveTranscriptPolicy({
       provider: "google",
       modelId: "gemini-2.0-flash",
       modelApi: "google-generative-ai",
     });
-    expect(policy.sanitizeToolCallIds).toBe(true);
+    expect(policy.sanitizeToolCallIds).toBe(false);
+    expect(policy.toolCallIdMode).toBeUndefined();
+    expect(policy.preserveSignatures).toBe(true);
     expect(policy.sanitizeThoughtSignatures).toEqual({
       allowBase64Only: true,
       includeCamelCase: true,
@@ -74,7 +77,8 @@ describe("resolveTranscriptPolicy", () => {
     expect(policy.repairToolUseResultPairing).toBe(true);
     expect(policy.validateAnthropicTurns).toBe(true);
     expect(policy.allowSyntheticToolResults).toBe(true);
-    expect(policy.sanitizeToolCallIds).toBe(true);
+    expect(policy.sanitizeToolCallIds).toBe(false);
+    expect(policy.preserveSignatures).toBe(true);
     expect(policy.sanitizeMode).toBe("full");
   });
 
