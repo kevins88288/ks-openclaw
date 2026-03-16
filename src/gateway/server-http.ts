@@ -712,7 +712,7 @@ export function createHooksRequestHandler(
   };
 }
 
-export function createGatewayHttpServer(opts: {
+export type GatewayHttpRequestHandlerOpts = {
   canvasHost: CanvasHostHandler | null;
   clients: Set<GatewayWsClient>;
   controlUiEnabled: boolean;
@@ -730,8 +730,11 @@ export function createGatewayHttpServer(opts: {
   /** Optional rate limiter for auth brute-force protection. */
   rateLimiter?: AuthRateLimiter;
   getReadiness?: ReadinessChecker;
-  tlsOptions?: TlsOptions;
-}): HttpServer {
+};
+
+export function createGatewayHttpRequestHandler(
+  opts: GatewayHttpRequestHandlerOpts,
+): (req: IncomingMessage, res: ServerResponse) => void {
   const {
     canvasHost,
     clients,
@@ -750,13 +753,6 @@ export function createGatewayHttpServer(opts: {
     rateLimiter,
     getReadiness,
   } = opts;
-  const httpServer: HttpServer = opts.tlsOptions
-    ? createHttpsServer(opts.tlsOptions, (req, res) => {
-        void handleRequest(req, res);
-      })
-    : createHttpServer((req, res) => {
-        void handleRequest(req, res);
-      });
 
   async function handleRequest(req: IncomingMessage, res: ServerResponse) {
     setDefaultSecurityHeaders(res, {
@@ -931,6 +927,18 @@ export function createGatewayHttpServer(opts: {
     }
   }
 
+  return (req: IncomingMessage, res: ServerResponse) => {
+    void handleRequest(req, res);
+  };
+}
+
+export function createGatewayHttpServer(
+  opts: GatewayHttpRequestHandlerOpts & { tlsOptions?: TlsOptions },
+): HttpServer {
+  const requestHandler = createGatewayHttpRequestHandler(opts);
+  const httpServer: HttpServer = opts.tlsOptions
+    ? createHttpsServer(opts.tlsOptions, requestHandler)
+    : createHttpServer(requestHandler);
   return httpServer;
 }
 
