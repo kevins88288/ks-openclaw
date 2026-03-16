@@ -1266,7 +1266,8 @@ export type PluginHookName =
   | "subagent_spawned"
   | "subagent_ended"
   | "gateway_start"
-  | "gateway_stop";
+  | "gateway_stop"
+  | "reaction_add";
 
 export const PLUGIN_HOOK_NAMES = [
   "before_model_resolve",
@@ -1729,6 +1730,33 @@ export type PluginHookGatewayContext = {
   port?: number;
 };
 
+// reaction_add context
+export type PluginHookReactionContext = {
+  channelType: string;
+  accountId?: string;
+  guildId?: string;
+};
+
+// reaction_add event
+export type PluginHookReactionAddEvent = {
+  /** The emoji that was reacted — raw Unicode for standard emoji, "<:name:id>" for custom emoji */
+  emoji: string;
+  /** Discord user ID of the reactor */
+  userId: string;
+  /** Discord username of the reactor */
+  userName?: string;
+  /** Channel where the reaction was added */
+  channelId: string;
+  /** Message that was reacted to */
+  messageId: string;
+  /** Guild ID (undefined for DMs) */
+  guildId?: string;
+  /** Whether the reactor is a bot */
+  isBot: boolean;
+  /** Whether this is a reaction add or remove event */
+  reaction_type: "add" | "remove";
+};
+
 // gateway_start hook
 export type PluginHookGatewayStartEvent = {
   port: number;
@@ -1840,6 +1868,10 @@ export type PluginHookHandlerMap = {
   gateway_stop: (
     event: PluginHookGatewayStopEvent,
     ctx: PluginHookGatewayContext,
+  ) => Promise<void> | void;
+  reaction_add: (
+    event: PluginHookReactionAddEvent,
+    ctx: PluginHookReactionContext,
   ) => Promise<void> | void;
 };
 
