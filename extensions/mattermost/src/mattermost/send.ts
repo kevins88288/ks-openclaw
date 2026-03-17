@@ -265,6 +265,7 @@ async function resolveMattermostSendContext(
   opts: MattermostSendOpts = {},
 ): Promise<MattermostSendContext> {
   const core = getCore();
+  const logger = core.logging.getChildLogger({ module: "mattermost" });
   const cfg = opts.cfg ?? core.config.loadConfig();
   const account = resolveMattermostAccount({
     cfg,
