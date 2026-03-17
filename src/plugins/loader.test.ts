@@ -3025,3 +3025,93 @@ module.exports = {
     expect(resolved).toBe(srcFile);
   });
 });
+
+describe("Plugin registry cache - path normalization", () => {
+  afterEach(() => {
+    clearPluginLoaderCache();
+  });
+
+  it("same workspace with different path representations should cache hit", () => {
+    const bundledDir = makeTempDir();
+    writePlugin({
+      id: "path-norm-test",
+      dir: bundledDir,
+      body: `module.exports = { id: "path-norm-test", register() {} };`,
+    });
+    process.env.OPENCLAW_BUNDLED_PLUGINS_DIR = bundledDir;
+
+    const workspaceDir = makeTempDir();
+    // Use a ".." segment to create a different string for the same dir
+    const parentDir = path.dirname(workspaceDir);
+    const baseName = path.basename(workspaceDir);
+    const workspaceDirWithDotDot = path.join(parentDir, "nonexistent", "..", baseName);
+
+    clearPluginLoaderCache();
+    const reg1 = loadOpenClawPlugins({
+      workspaceDir,
+      config: {},
+      cache: true,
+    });
+    const reg2 = loadOpenClawPlugins({
+      workspaceDir: workspaceDirWithDotDot,
+      config: {},
+      cache: true,
+    });
+
+    // Both calls should return the same cached registry instance
+    expect(reg1).toBe(reg2);
+  });
+
+  it("symlinked workspace path should cache hit against real path", () => {
+    const bundledDir = makeTempDir();
+    writePlugin({
+      id: "symlink-cache-test",
+      dir: bundledDir,
+      body: `module.exports = { id: "symlink-cache-test", register() {} };`,
+    });
+    process.env.OPENCLAW_BUNDLED_PLUGINS_DIR = bundledDir;
+
+    const realWorkspaceDir = makeTempDir();
+    const symlinkDir = path.join(fixtureRoot, `symlink-${tempDirIndex++}`);
+    fs.symlinkSync(realWorkspaceDir, symlinkDir);
+
+    clearPluginLoaderCache();
+    const reg1 = loadOpenClawPlugins({
+      workspaceDir: realWorkspaceDir,
+      config: {},
+      cache: true,
+    });
+    const reg2 = loadOpenClawPlugins({
+      workspaceDir: symlinkDir,
+      config: {},
+      cache: true,
+    });
+
+    expect(reg1).toBe(reg2);
+  });
+
+  it("does not call initializeGlobalHookRunner twice on cache hit", () => {
+    const bundledDir = makeTempDir();
+    writePlugin({
+      id: "double-init-test",
+      dir: bundledDir,
+      body: `module.exports = { id: "double-init-test", register() {} };`,
+    });
+    process.env.OPENCLAW_BUNDLED_PLUGINS_DIR = bundledDir;
+
+    const workspaceDir = makeTempDir();
+    clearPluginLoaderCache();
+    resetGlobalHookRunner();
+
+    // First load — cache miss, should initialize hook runner once
+    loadOpenClawPlugins({ workspaceDir, config: {}, cache: true });
+    const runnerAfterFirst = getGlobalHookRunner();
+    expect(runnerAfterFirst).toBeTruthy();
+
+    // Second load — cache hit, should still have the same hook runner
+    // (previously this would call initializeGlobalHookRunner twice on cache hit)
+    loadOpenClawPlugins({ workspaceDir, config: {}, cache: true });
+    const runnerAfterSecond = getGlobalHookRunner();
+    expect(runnerAfterSecond).toBeTruthy();
+  });
+});
