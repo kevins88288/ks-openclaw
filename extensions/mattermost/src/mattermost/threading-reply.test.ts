@@ -51,13 +51,12 @@ beforeEach(() => {
 
 describe("resolveMattermostReplyContext", () => {
   it("fetches parent post when parent_id differs from root_id", async () => {
-    // This is the main happy-path: parent_id ≠ root_id (specific reply gesture)
-    // Callers guard this condition; the function itself just fetches the given parentPostId.
     const post = makePost();
     const client = makeClient(post);
 
-    const result = await resolveMattermostReplyContext({
+    const result = await resolveMattermostReplyContextForPost({
       client,
+      threadRootId: "root-1",
       parentPostId: "parent-1",
       resolveUserInfo,
     });
@@ -68,17 +67,35 @@ describe("resolveMattermostReplyContext", () => {
     expect((client.request as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
   });
 
-  it("returns null when parent_id === root_id (caller responsibility, not triggered)", () => {
-    // The guard is in monitor.ts: isSpecificReply = parent_id !== root_id.
-    // When they're equal, resolveMattermostReplyContext is never called.
-    // This test documents the caller contract: same-id means no specific reply.
-    expect(true).toBe(true); // Contract enforced in monitor.ts; nothing to test in the resolver
+  it("returns null when parent_id === root_id", async () => {
+    const post = makePost({ id: "same-id" });
+    const client = makeClient(post);
+
+    const result = await resolveMattermostReplyContextForPost({
+      client,
+      threadRootId: "same-id",
+      parentPostId: "same-id",
+      resolveUserInfo,
+    });
+
+    expect(result).toBeNull();
+    // Guarded: should not fetch
+    expect((client.request as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
   });
 
-  it("returns null when parent_id is empty (caller responsibility)", () => {
-    // Same: monitor.ts guards with: replyToParentId && replyToParentId !== threadRootId
-    // Empty parent_id → isSpecificReply = false → resolver not called.
-    expect(true).toBe(true); // Documented caller contract
+  it("returns null when parent_id is empty", async () => {
+    const post = makePost();
+    const client = makeClient(post);
+
+    const result = await resolveMattermostReplyContextForPost({
+      client,
+      threadRootId: "root-1",
+      parentPostId: "   ",
+      resolveUserInfo,
+    });
+
+    expect(result).toBeNull();
+    expect((client.request as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
   });
 
   it("cache hit returns cached result without a second fetch", async () => {
