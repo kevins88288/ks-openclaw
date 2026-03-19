@@ -88,6 +88,7 @@
 - Restart: stop old gateway and run:
   `pkill -9 -f openclaw-gateway || true; nohup openclaw gateway run --bind loopback --port 18789 --force > /tmp/openclaw-gateway.log 2>&1 &`
 - Verify: `openclaw channels status --probe`, `ss -ltnp | rg 18789`, `tail -n 120 /tmp/openclaw-gateway.log`.
+- Gateway startup time: the gateway takes ~200s to fully start (loading plugins, connecting channels). Wait at least 200s after restart before running health checks or `channels status --probe`.
 
 ## Build, Test, and Development Commands
 
