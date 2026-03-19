@@ -233,7 +233,7 @@ export async function updateMattermostPost(
   if (params.props !== undefined) {
     payload.props = params.props;
   }
-  return await client.request<MattermostPost>(`/posts/${postId}`, {
+  return await client.request<MattermostPost>(`/posts/${encodeURIComponent(postId)}`, {
     method: "PUT",
     body: JSON.stringify(payload),
   });
@@ -248,7 +248,7 @@ export async function fetchMattermostPost(
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await client.request<MattermostPost>(`/posts/${postId}`, {
+    return await client.request<MattermostPost>(`/posts/${encodeURIComponent(postId)}`, {
       method: "GET",
       signal: controller.signal,
     });

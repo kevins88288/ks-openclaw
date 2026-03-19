@@ -421,6 +421,7 @@ describe("resolveMattermostReplyContext", () => {
   it("fetches the parent post and returns body+sender", async () => {
     const post = makePost({
       id: "parent-1",
+      channel_id: "chan-1",
       message: "This is the specific message being replied to",
     });
     const client = makeClient(post);
@@ -428,6 +429,7 @@ describe("resolveMattermostReplyContext", () => {
     const result = await resolveMattermostReplyContext({
       client,
       parentPostId: "parent-1",
+      expectedChannelId: "chan-1",
       resolveUserInfo,
     });
 
@@ -443,6 +445,7 @@ describe("resolveMattermostReplyContext", () => {
     const result = await resolveMattermostReplyContext({
       client,
       parentPostId: "error-post",
+      expectedChannelId: "chan-1",
       resolveUserInfo,
     });
 
@@ -451,12 +454,13 @@ describe("resolveMattermostReplyContext", () => {
 
   it("truncates at 1000 chars", async () => {
     const longText = "B".repeat(2000);
-    const post = makePost({ id: "parent-long", message: longText });
+    const post = makePost({ id: "parent-long", channel_id: "chan-1", message: longText });
     const client = makeClient(post);
 
     const result = await resolveMattermostReplyContext({
       client,
       parentPostId: "parent-long",
+      expectedChannelId: "chan-1",
       resolveUserInfo,
     });
 
@@ -467,6 +471,7 @@ describe("resolveMattermostReplyContext", () => {
   it("returns cached result on second call (positive cache)", async () => {
     const post = makePost({
       id: "parent-cached",
+      channel_id: "chan-1",
       message: "Cached message",
     });
     const client = makeClient(post);
@@ -474,11 +479,13 @@ describe("resolveMattermostReplyContext", () => {
     const r1 = await resolveMattermostReplyContext({
       client,
       parentPostId: "parent-cached",
+      expectedChannelId: "chan-1",
       resolveUserInfo,
     });
     const r2 = await resolveMattermostReplyContext({
       client,
       parentPostId: "parent-cached",
+      expectedChannelId: "chan-1",
       resolveUserInfo,
     });
 
@@ -494,6 +501,7 @@ describe("resolveMattermostReplyContext", () => {
     const r1 = await resolveMattermostReplyContext({
       client,
       parentPostId: "null-parent",
+      expectedChannelId: "chan-1",
       resolveUserInfo,
     });
     expect(r1).toBeNull();
@@ -503,11 +511,52 @@ describe("resolveMattermostReplyContext", () => {
     const r2 = await resolveMattermostReplyContext({
       client,
       parentPostId: "null-parent",
+      expectedChannelId: "chan-1",
       resolveUserInfo,
     });
     expect(r2).toBeNull();
     expect((client.request as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
 
     vi.useRealTimers();
+  });
+
+  it("returns null when post belongs to a different channel (channel binding check)", async () => {
+    const post = makePost({
+      id: "cross-chan-post",
+      channel_id: "chan-other",
+      message: "Message from another channel",
+    });
+    const client = makeClient(post);
+
+    const result = await resolveMattermostReplyContext({
+      client,
+      parentPostId: "cross-chan-post",
+      expectedChannelId: "chan-expected",
+      resolveUserInfo,
+    });
+
+    expect(result).toBeNull();
+    // The post was fetched once; channel mismatch caused null result
+    expect((client.request as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
+  });
+
+  it("allows post when channel_id is absent (no channel_id on post)", async () => {
+    // If the API returns a post without channel_id, we don't block it (fail-open)
+    const post = makePost({
+      id: "no-channel-post",
+      channel_id: undefined,
+      message: "Post without channel_id",
+    });
+    const client = makeClient(post);
+
+    const result = await resolveMattermostReplyContext({
+      client,
+      parentPostId: "no-channel-post",
+      expectedChannelId: "chan-expected",
+      resolveUserInfo,
+    });
+
+    expect(result).not.toBeNull();
+    expect(result?.body).toBe("Post without channel_id");
   });
 });

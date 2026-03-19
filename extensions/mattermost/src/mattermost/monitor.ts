@@ -714,7 +714,7 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
         const interactionReplyContext = isInteractionSpecificReply
           ? await resolveMattermostReplyContext({
               client,
-              parentPostId: interactionReplyToParentId!,
+              parentPostId: interactionReplyToParentId,
               expectedChannelId: opts.channelId,
               resolveUserInfo,
             })
@@ -1602,7 +1602,7 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
     const replyContext = isSpecificReply
       ? await resolveMattermostReplyContext({
           client,
-          parentPostId: replyToParentId!,
+          parentPostId: replyToParentId,
           expectedChannelId: channelId,
           resolveUserInfo,
         })

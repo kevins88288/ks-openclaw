@@ -287,6 +287,7 @@ function setReplyCachedNull(key: string, now: number): void {
 export async function resolveMattermostReplyContext(params: {
   client: MattermostClient;
   parentPostId: string; // post.parent_id (the specific message being replied to)
+  expectedChannelId: string; // channel of the incoming post — guard against cross-channel leakage
   resolveUserInfo: (userId: string) => Promise<MattermostUser | null>;
   log?: { debug?: (msg: string) => void };
 }): Promise<MattermostReplyContext | null> {
@@ -315,6 +316,17 @@ export async function resolveMattermostReplyContext(params: {
     return null;
   }
 
+  // Channel binding check: discard the post if it belongs to a different channel.
+  // This prevents cross-channel information leakage if an attacker can influence
+  // the parent_id value.
+  if (post.channel_id && post.channel_id !== params.expectedChannelId) {
+    log?.debug?.(
+      `resolveMattermostReplyContext: post ${parentPostId} channel ${post.channel_id} !== expected ${params.expectedChannelId}, skipping`,
+    );
+    MATTERMOST_REPLY_CONTEXT_NULL_CACHE.set(parentPostId, now);
+    return null;
+  }
+
   // 4. Resolve sender
   const userId = post.user_id ?? "";
   let sender = userId;
@@ -338,29 +350,5 @@ export async function resolveMattermostReplyContext(params: {
   return result;
 }
 
-/**
- * Convenience wrapper for monitor.ts.
- *
- * Mattermost only has specific "reply to" context when parentPostId is present
- * and differs from the thread root id. This helper enforces that guard and
- * ensures we do not fetch unnecessarily.
- */
-export async function resolveMattermostReplyContextForPost(params: {
-  client: MattermostClient;
-  threadRootId: string | undefined;
-  parentPostId: string | undefined;
-  resolveUserInfo: (userId: string) => Promise<MattermostUser | null>;
-  log?: { debug?: (msg: string) => void };
-}): Promise<MattermostReplyContext | null> {
-  const rootId = params.threadRootId?.trim();
-  const parentId = params.parentPostId?.trim();
-  if (!rootId || !parentId || parentId === rootId) {
-    return null;
-  }
-  return await resolveMattermostReplyContext({
-    client: params.client,
-    parentPostId: parentId,
-    resolveUserInfo: params.resolveUserInfo,
-    log: params.log,
-  });
-}
+
+
