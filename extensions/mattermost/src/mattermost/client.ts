@@ -238,6 +238,23 @@ export async function updateMattermostPost(
   });
 }
 
+export async function fetchMattermostPost(
+  client: MattermostClient,
+  postId: string,
+  opts?: { timeoutMs?: number },
+): Promise<MattermostPost | null> {
+  try {
+    const fetchPromise = client.request<MattermostPost>(`/posts/${postId}`, { method: "GET" });
+    const timeoutMs = opts?.timeoutMs ?? 3000;
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("timeout")), timeoutMs),
+    );
+    return await Promise.race([fetchPromise, timeoutPromise]);
+  } catch {
+    return null;
+  }
+}
+
 export async function uploadMattermostFile(
   client: MattermostClient,
   params: {

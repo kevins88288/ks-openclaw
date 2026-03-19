@@ -50,6 +50,8 @@ import {
   type MattermostPost,
   type MattermostUser,
 } from "./client.js";
+import { readSessionUpdatedAt } from "../../../../src/config/sessions.js";
+import { resolveMattermostThreadStarter } from "./threading.js";
 import {
   buildButtonProps,
   computeInteractionCallbackUrl,
@@ -664,6 +666,24 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
         });
         const to = kind === "direct" ? `user:${opts.userId}` : `channel:${opts.channelId}`;
         const bodyText = `[Button click: user @${opts.userName} selected "${opts.actionName}"]`;
+
+        // ── Thread starter context injection (interaction path) ──────────────
+        const interactionThreadRootId = opts.post.root_id?.trim() || undefined;
+        const interactionThreadStarter = interactionThreadRootId
+          ? await resolveMattermostThreadStarter({
+              client,
+              rootPostId: interactionThreadRootId,
+              resolveUserInfo,
+            })
+          : null;
+        const interactionStorePath = core.channel.session.resolveStorePath(cfg.session?.store, {
+          agentId: route.agentId,
+        });
+        const interactionSessionPreviousTimestamp = readSessionUpdatedAt({
+          storePath: interactionStorePath,
+          sessionKey: threadContext.sessionKey,
+        });
+
         const ctxPayload = core.channel.reply.finalizeInboundContext({
           Body: bodyText,
           BodyForAgent: bodyText,
@@ -695,6 +715,11 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
           CommandAuthorized: false,
           OriginatingChannel: "mattermost" as const,
           OriginatingTo: to,
+          ThreadStarterBody: !interactionSessionPreviousTimestamp
+            ? interactionThreadStarter?.text
+            : undefined,
+          IsFirstThreadTurn:
+            interactionThreadRootId && !interactionSessionPreviousTimestamp ? true : undefined,
         });
 
         const textLimit = core.channel.text.resolveTextChunkLimit(
@@ -1503,6 +1528,24 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
     const { effectiveReplyToId, sessionKey, parentSessionKey } = threadContext;
     const historyKey = kind === "direct" ? null : sessionKey;
 
+    // ── Thread starter context injection ─────────────────────────────────────
+    // Fetch the root post content for new thread sessions only.
+    // On fetch failure, threadStarter is null and processing continues normally.
+    const threadStarter = threadRootId
+      ? await resolveMattermostThreadStarter({
+          client,
+          rootPostId: threadRootId,
+          resolveUserInfo,
+        })
+      : null;
+    const threadStorePath = core.channel.session.resolveStorePath(cfg.session?.store, {
+      agentId: route.agentId,
+    });
+    const threadSessionPreviousTimestamp = readSessionUpdatedAt({
+      storePath: threadStorePath,
+      sessionKey,
+    });
+
     const mentionRegexes = core.channel.mentions.buildMentionRegexes(cfg, route.agentId);
     const wasMentioned =
       kind !== "direct" &&
@@ -1688,6 +1731,8 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
       OriginatingChannel: "mattermost" as const,
       OriginatingTo: to,
       ...mediaPayload,
+      ThreadStarterBody: !threadSessionPreviousTimestamp ? threadStarter?.text : undefined,
+      IsFirstThreadTurn: threadRootId && !threadSessionPreviousTimestamp ? true : undefined,
     });
 
     if (kind === "direct") {

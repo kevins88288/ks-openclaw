@@ -9,6 +9,7 @@ import {
   type MattermostMentionGateInput,
   type MattermostRequireMentionResolverInput,
 } from "./monitor.js";
+import { buildThreadStarterContextFields } from "./threading.js";
 
 function resolveRequireMentionForTest(params: MattermostRequireMentionResolverInput): boolean {
   const root = params.cfg.channels?.mattermost;
@@ -245,5 +246,79 @@ describe("resolveMattermostThreadSessionContext", () => {
       sessionKey: "agent:main:mattermost:default:user-1",
       parentSessionKey: undefined,
     });
+  });
+});
+
+// ── Thread starter context injection ─────────────────────────────────────────
+// Tests for the buildThreadStarterContextFields helper (pure unit tests).
+// Integration with handlePost / handleInteraction is covered via this helper
+// since the full monitor is not instantiatable in unit tests without a real runtime.
+
+describe("buildThreadStarterContextFields", () => {
+  const threadStarter = { text: "What is the status?", author: "@alice", timestamp: 1000 };
+
+  it("sets ThreadStarterBody and IsFirstThreadTurn on the first thread message (no prior session)", () => {
+    const fields = buildThreadStarterContextFields({
+      threadRootId: "root-1",
+      threadStarter,
+      sessionPreviousTimestamp: undefined,
+    });
+    expect(fields.ThreadStarterBody).toBe("What is the status?");
+    expect(fields.IsFirstThreadTurn).toBe(true);
+  });
+
+  it("does NOT set ThreadStarterBody when session already exists (prior timestamp)", () => {
+    const fields = buildThreadStarterContextFields({
+      threadRootId: "root-1",
+      threadStarter,
+      sessionPreviousTimestamp: 1234567890,
+    });
+    expect(fields.ThreadStarterBody).toBeUndefined();
+    expect(fields.IsFirstThreadTurn).toBeUndefined();
+  });
+
+  it("does NOT set ThreadStarterBody for non-thread messages (no threadRootId)", () => {
+    const fields = buildThreadStarterContextFields({
+      threadRootId: undefined,
+      threadStarter,
+      sessionPreviousTimestamp: undefined,
+    });
+    expect(fields.ThreadStarterBody).toBeUndefined();
+    expect(fields.IsFirstThreadTurn).toBeUndefined();
+  });
+
+  it("sets IsFirstThreadTurn alongside ThreadStarterBody", () => {
+    const fields = buildThreadStarterContextFields({
+      threadRootId: "root-2",
+      threadStarter,
+      sessionPreviousTimestamp: undefined,
+    });
+    // Both set together
+    expect(fields.ThreadStarterBody).toBeDefined();
+    expect(fields.IsFirstThreadTurn).toBe(true);
+  });
+
+  it("handles null threadStarter gracefully (fetch failure)", () => {
+    const fields = buildThreadStarterContextFields({
+      threadRootId: "root-3",
+      threadStarter: null,
+      sessionPreviousTimestamp: undefined,
+    });
+    // IsFirstThreadTurn still set — we know it's a new session thread
+    expect(fields.IsFirstThreadTurn).toBe(true);
+    // ThreadStarterBody is undefined since fetch failed
+    expect(fields.ThreadStarterBody).toBeUndefined();
+  });
+
+  it("truncation: ThreadStarterBody respects 2000-char limit from resolveMattermostThreadStarter", () => {
+    // Simulate a pre-truncated result from the resolver
+    const longText = "B".repeat(2000);
+    const truncatedStarter = { text: longText, author: "@bob" };
+    const fields = buildThreadStarterContextFields({
+      threadRootId: "root-long",
+      threadStarter: truncatedStarter,
+      sessionPreviousTimestamp: undefined,
+    });
+    expect(fields.ThreadStarterBody).toHaveLength(2000);
   });
 });

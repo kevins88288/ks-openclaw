@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createMattermostClient,
   createMattermostPost,
+  fetchMattermostPost,
   normalizeMattermostBaseUrl,
   updateMattermostPost,
 } from "./client.js";
@@ -244,6 +245,63 @@ describe("createMattermostPost", () => {
 
     const body = JSON.parse(calls[0].init?.body as string);
     expect(body.props).toBeUndefined();
+  });
+});
+
+// ── fetchMattermostPost ──────────────────────────────────────────────
+
+describe("fetchMattermostPost", () => {
+  it("returns the post on a 200 response", async () => {
+    const postBody = { id: "post-123", message: "Hello world", user_id: "u1", create_at: 1000 };
+    const { client } = createTestClient({ body: postBody });
+    const result = await fetchMattermostPost(client, "post-123");
+    expect(result).toEqual(postBody);
+  });
+
+  it("returns null on a 404 response", async () => {
+    const { mockFetch } = createMockFetch({ status: 404, body: { message: "Not found" } });
+    const client = createMattermostClient({
+      baseUrl: "http://localhost:8065",
+      botToken: "tok",
+      fetchImpl: mockFetch,
+    });
+    const result = await fetchMattermostPost(client, "missing-post");
+    expect(result).toBeNull();
+  });
+
+  it("returns null when fetch throws an error", async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new Error("Network error");
+    });
+    const client = createMattermostClient({
+      baseUrl: "http://localhost:8065",
+      botToken: "tok",
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const result = await fetchMattermostPost(client, "post-xyz");
+    expect(result).toBeNull();
+  });
+
+  it("returns null when the request times out", async () => {
+    vi.useFakeTimers();
+    const fetchImpl = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          // Never resolves within timeout
+          setTimeout(() => resolve(new Response(JSON.stringify({}), { status: 200 })), 10_000);
+        }),
+    );
+    const client = createMattermostClient({
+      baseUrl: "http://localhost:8065",
+      botToken: "tok",
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const resultPromise = fetchMattermostPost(client, "slow-post", { timeoutMs: 100 });
+    // Advance timers past the timeout
+    vi.advanceTimersByTime(200);
+    const result = await resultPromise;
+    expect(result).toBeNull();
+    vi.useRealTimers();
   });
 });
 
