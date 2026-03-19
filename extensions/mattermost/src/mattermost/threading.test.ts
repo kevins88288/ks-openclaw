@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MattermostClient, MattermostPost } from "./client.js";
 import {
+  __resetMattermostReplyContextCacheForTest,
   __resetMattermostThreadStarterCacheForTest,
   buildMattermostThreadLabel,
   buildThreadStarterContextFields,
+  resolveMattermostReplyContext,
   resolveMattermostThreadStarter,
   type MattermostThreadStarter,
 } from "./threading.js";
@@ -45,6 +47,7 @@ async function resolveUserInfo(userId: string) {
 
 beforeEach(() => {
   __resetMattermostThreadStarterCacheForTest();
+  __resetMattermostReplyContextCacheForTest();
   vi.useRealTimers();
 });
 
@@ -413,5 +416,98 @@ describe("buildThreadStarterContextFields — IsFirstThreadTurn", () => {
       sessionPreviousTimestamp: undefined,
     });
     expect(result.IsFirstThreadTurn).toBeUndefined();
+
+describe("resolveMattermostReplyContext", () => {
+  it("fetches the parent post and returns body+sender", async () => {
+    const post = makePost({
+      id: "parent-1",
+      message: "This is the specific message being replied to",
+    });
+    const client = makeClient(post);
+
+    const result = await resolveMattermostReplyContext({
+      client,
+      parentPostId: "parent-1",
+      resolveUserInfo,
+    });
+
+    expect(result).not.toBeNull();
+    expect(result?.body).toBe("This is the specific message being replied to");
+    expect(result?.sender).toBe("@user-1");
+    expect((client.request as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
+  });
+
+  it("returns null on API failure", async () => {
+    const client = makeClient(null, { throwError: true });
+
+    const result = await resolveMattermostReplyContext({
+      client,
+      parentPostId: "error-post",
+      resolveUserInfo,
+    });
+
+    expect(result).toBeNull();
+  });
+
+  it("truncates at 1000 chars", async () => {
+    const longText = "B".repeat(2000);
+    const post = makePost({ id: "parent-long", message: longText });
+    const client = makeClient(post);
+
+    const result = await resolveMattermostReplyContext({
+      client,
+      parentPostId: "parent-long",
+      resolveUserInfo,
+    });
+
+    expect(result?.body).toHaveLength(1000);
+    expect(result?.body).toBe("B".repeat(1000));
+  });
+
+  it("returns cached result on second call (positive cache)", async () => {
+    const post = makePost({
+      id: "parent-cached",
+      message: "Cached message",
+    });
+    const client = makeClient(post);
+
+    const r1 = await resolveMattermostReplyContext({
+      client,
+      parentPostId: "parent-cached",
+      resolveUserInfo,
+    });
+    const r2 = await resolveMattermostReplyContext({
+      client,
+      parentPostId: "parent-cached",
+      resolveUserInfo,
+    });
+
+    expect(r1).not.toBeNull();
+    expect(r2).toEqual(r1);
+    expect((client.request as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
+  });
+
+  it("returns null from negative cache within TTL", async () => {
+    vi.useFakeTimers();
+    const client = makeClient(null);
+
+    const r1 = await resolveMattermostReplyContext({
+      client,
+      parentPostId: "null-parent",
+      resolveUserInfo,
+    });
+    expect(r1).toBeNull();
+
+    vi.advanceTimersByTime(10_000);
+
+    const r2 = await resolveMattermostReplyContext({
+      client,
+      parentPostId: "null-parent",
+      resolveUserInfo,
+    });
+    expect(r2).toBeNull();
+    expect((client.request as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
+
+    vi.useRealTimers();
   });
 });

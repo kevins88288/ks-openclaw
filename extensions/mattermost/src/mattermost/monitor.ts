@@ -331,6 +331,22 @@ export function resolveMattermostThreadSessionContext(params: {
     parentSessionKey: threadKeys.parentSessionKey,
   };
 }
+
+export function resolveMattermostSpecificReplyParentId(params: {
+  parentId?: string | null;
+  threadRootId?: string | null;
+}): string | undefined {
+  const parentId = params.parentId?.trim() || undefined;
+  if (!parentId) {
+    return undefined;
+  }
+  const rootId = params.threadRootId?.trim() || undefined;
+  if (rootId && parentId === rootId) {
+    return undefined;
+  }
+  return parentId;
+}
+
 type MattermostMediaInfo = {
   path: string;
   contentType?: string;
@@ -699,6 +715,7 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
           ? await resolveMattermostReplyContext({
               client,
               parentPostId: interactionReplyToParentId!,
+              expectedChannelId: opts.channelId,
               resolveUserInfo,
             })
           : null;
@@ -1586,6 +1603,7 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
       ? await resolveMattermostReplyContext({
           client,
           parentPostId: replyToParentId!,
+          expectedChannelId: channelId,
           resolveUserInfo,
         })
       : null;

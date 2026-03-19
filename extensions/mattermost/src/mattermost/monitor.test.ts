@@ -5,6 +5,7 @@ import {
   evaluateMattermostMentionGate,
   resolveMattermostEffectiveReplyToId,
   resolveMattermostReplyRootId,
+  resolveMattermostSpecificReplyParentId,
   resolveMattermostThreadSessionContext,
   type MattermostMentionGateInput,
   type MattermostRequireMentionResolverInput,
@@ -246,6 +247,55 @@ describe("resolveMattermostThreadSessionContext", () => {
       sessionKey: "agent:main:mattermost:default:user-1",
       parentSessionKey: undefined,
     });
+  });
+});
+
+// ── Reply-to context injection (Gap 2) ───────────────────────────────────────
+
+describe("resolveMattermostSpecificReplyParentId", () => {
+  it("returns undefined when parentId is absent", () => {
+    expect(
+      resolveMattermostSpecificReplyParentId({
+        parentId: undefined,
+        threadRootId: "root-1",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("returns undefined when parentId is empty/whitespace", () => {
+    expect(
+      resolveMattermostSpecificReplyParentId({
+        parentId: "   ",
+        threadRootId: "root-1",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("returns undefined when parentId equals threadRootId", () => {
+    expect(
+      resolveMattermostSpecificReplyParentId({
+        parentId: "root-1",
+        threadRootId: "root-1",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("returns parentId when it differs from threadRootId", () => {
+    expect(
+      resolveMattermostSpecificReplyParentId({
+        parentId: "parent-1",
+        threadRootId: "root-1",
+      }),
+    ).toBe("parent-1");
+  });
+
+  it("trims parentId and threadRootId", () => {
+    expect(
+      resolveMattermostSpecificReplyParentId({
+        parentId: " parent-1 ",
+        threadRootId: " root-1 ",
+      }),
+    ).toBe("parent-1");
   });
 });
 
