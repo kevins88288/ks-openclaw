@@ -285,10 +285,16 @@ describe("fetchMattermostPost", () => {
   it("returns null when the request times out", async () => {
     vi.useFakeTimers();
     const fetchImpl = vi.fn(
-      () =>
-        new Promise<Response>((resolve) => {
-          // Never resolves within timeout
-          setTimeout(() => resolve(new Response(JSON.stringify({}), { status: 200 })), 10_000);
+      (_url: string | URL | Request, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          // Reject if the AbortSignal fires before the long timeout
+          if (init?.signal) {
+            init.signal.addEventListener("abort", () =>
+              reject(new DOMException("The operation was aborted.", "AbortError")),
+            );
+          }
+          // Would resolve after 10s, but abort fires first
+          setTimeout(() => _resolve(new Response(JSON.stringify({}), { status: 200 })), 10_000);
         }),
     );
     const client = createMattermostClient({
@@ -297,7 +303,7 @@ describe("fetchMattermostPost", () => {
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
     const resultPromise = fetchMattermostPost(client, "slow-post", { timeoutMs: 100 });
-    // Advance timers past the timeout
+    // Advance timers past the timeout — AbortController fires at 100ms
     vi.advanceTimersByTime(200);
     const result = await resultPromise;
     expect(result).toBeNull();

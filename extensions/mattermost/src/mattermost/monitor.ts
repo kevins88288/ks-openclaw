@@ -51,7 +51,7 @@ import {
   type MattermostUser,
 } from "./client.js";
 import { readSessionUpdatedAt } from "../../../../src/config/sessions.js";
-import { resolveMattermostThreadStarter } from "./threading.js";
+import { buildThreadStarterContextFields, resolveMattermostThreadStarter } from "./threading.js";
 import {
   buildButtonProps,
   computeInteractionCallbackUrl,
@@ -669,13 +669,6 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
 
         // ── Thread starter context injection (interaction path) ──────────────
         const interactionThreadRootId = opts.post.root_id?.trim() || undefined;
-        const interactionThreadStarter = interactionThreadRootId
-          ? await resolveMattermostThreadStarter({
-              client,
-              rootPostId: interactionThreadRootId,
-              resolveUserInfo,
-            })
-          : null;
         const interactionStorePath = core.channel.session.resolveStorePath(cfg.session?.store, {
           agentId: route.agentId,
         });
@@ -683,6 +676,14 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
           storePath: interactionStorePath,
           sessionKey: threadContext.sessionKey,
         });
+        // Only fetch thread starter for NEW thread sessions.
+        const interactionThreadStarter = interactionThreadRootId && !interactionSessionPreviousTimestamp
+          ? await resolveMattermostThreadStarter({
+              client,
+              rootPostId: interactionThreadRootId,
+              resolveUserInfo,
+            })
+          : null;
 
         const ctxPayload = core.channel.reply.finalizeInboundContext({
           Body: bodyText,
@@ -715,11 +716,11 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
           CommandAuthorized: false,
           OriginatingChannel: "mattermost" as const,
           OriginatingTo: to,
-          ThreadStarterBody: !interactionSessionPreviousTimestamp
-            ? interactionThreadStarter?.text
-            : undefined,
-          IsFirstThreadTurn:
-            interactionThreadRootId && !interactionSessionPreviousTimestamp ? true : undefined,
+          ...buildThreadStarterContextFields({
+            threadRootId: interactionThreadRootId,
+            threadStarter: interactionThreadStarter,
+            sessionPreviousTimestamp: interactionSessionPreviousTimestamp,
+          }),
         });
 
         const textLimit = core.channel.text.resolveTextChunkLimit(
@@ -1529,15 +1530,7 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
     const historyKey = kind === "direct" ? null : sessionKey;
 
     // ── Thread starter context injection ─────────────────────────────────────
-    // Fetch the root post content for new thread sessions only.
-    // On fetch failure, threadStarter is null and processing continues normally.
-    const threadStarter = threadRootId
-      ? await resolveMattermostThreadStarter({
-          client,
-          rootPostId: threadRootId,
-          resolveUserInfo,
-        })
-      : null;
+    // Check session existence FIRST to avoid unnecessary API calls on established sessions.
     const threadStorePath = core.channel.session.resolveStorePath(cfg.session?.store, {
       agentId: route.agentId,
     });
@@ -1545,6 +1538,14 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
       storePath: threadStorePath,
       sessionKey,
     });
+    // Only fetch thread starter for NEW thread sessions (no prior timestamp).
+    const threadStarter = threadRootId && !threadSessionPreviousTimestamp
+      ? await resolveMattermostThreadStarter({
+          client,
+          rootPostId: threadRootId,
+          resolveUserInfo,
+        })
+      : null;
 
     const mentionRegexes = core.channel.mentions.buildMentionRegexes(cfg, route.agentId);
     const wasMentioned =
@@ -1731,8 +1732,11 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
       OriginatingChannel: "mattermost" as const,
       OriginatingTo: to,
       ...mediaPayload,
-      ThreadStarterBody: !threadSessionPreviousTimestamp ? threadStarter?.text : undefined,
-      IsFirstThreadTurn: threadRootId && !threadSessionPreviousTimestamp ? true : undefined,
+      ...buildThreadStarterContextFields({
+        threadRootId,
+        threadStarter,
+        sessionPreviousTimestamp: threadSessionPreviousTimestamp,
+      }),
     });
 
     if (kind === "direct") {

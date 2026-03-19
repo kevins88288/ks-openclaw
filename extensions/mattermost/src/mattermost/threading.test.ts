@@ -274,4 +274,38 @@ describe("resolveMattermostThreadStarter", () => {
     // author falls back to empty string (userId is empty)
     expect(typeof result?.author).toBe("string");
   });
+
+  it("evicts oldest entries from negative cache when LRU max (500) is exceeded", async () => {
+    // Fill the negative cache with 500 null-result entries
+    for (let i = 0; i < 500; i++) {
+      const nullClient = makeClient(null);
+      await resolveMattermostThreadStarter({
+        client: nullClient,
+        rootPostId: `null-post-${i}`,
+        resolveUserInfo,
+      });
+    }
+
+    // The 501st null entry should cause null-post-0 to be evicted from negative cache
+    const nullClient501 = makeClient(null);
+    await resolveMattermostThreadStarter({
+      client: nullClient501,
+      rootPostId: "null-post-new",
+      resolveUserInfo,
+    });
+
+    // null-post-0 was evicted from the negative cache; re-fetching it should call API again
+    const rehydratedPost = makePost({ id: "null-post-0", message: "Back from eviction" });
+    const rehydratedClient = makeClient(rehydratedPost);
+    const result = await resolveMattermostThreadStarter({
+      client: rehydratedClient,
+      rootPostId: "null-post-0",
+      resolveUserInfo,
+    });
+
+    // If the negative cache were still holding null-post-0, result would be null.
+    // Eviction means the API was called again and we got the real post back.
+    expect(result).not.toBeNull();
+    expect(result?.text).toBe("Back from eviction");
+  });
 });

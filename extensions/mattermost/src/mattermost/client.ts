@@ -243,15 +243,18 @@ export async function fetchMattermostPost(
   postId: string,
   opts?: { timeoutMs?: number },
 ): Promise<MattermostPost | null> {
+  const timeoutMs = opts?.timeoutMs ?? 3000;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const fetchPromise = client.request<MattermostPost>(`/posts/${postId}`, { method: "GET" });
-    const timeoutMs = opts?.timeoutMs ?? 3000;
-    const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("timeout")), timeoutMs),
-    );
-    return await Promise.race([fetchPromise, timeoutPromise]);
+    return await client.request<MattermostPost>(`/posts/${postId}`, {
+      method: "GET",
+      signal: controller.signal,
+    });
   } catch {
     return null;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 

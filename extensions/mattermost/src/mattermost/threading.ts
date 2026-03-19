@@ -79,6 +79,11 @@ function isNullCached(key: string, now: number): boolean {
 
 function setNullCached(key: string, now: number): void {
   MATTERMOST_THREAD_STARTER_NULL_CACHE.set(key, now);
+  while (MATTERMOST_THREAD_STARTER_NULL_CACHE.size > MATTERMOST_THREAD_STARTER_CACHE_MAX) {
+    const iter = MATTERMOST_THREAD_STARTER_NULL_CACHE.keys().next();
+    if (iter.done) break;
+    MATTERMOST_THREAD_STARTER_NULL_CACHE.delete(iter.value);
+  }
 }
 
 // ── Context field builder ─────────────────────────────────────────────────────
@@ -110,8 +115,9 @@ export async function resolveMattermostThreadStarter(params: {
   client: MattermostClient;
   rootPostId: string;
   resolveUserInfo: (userId: string) => Promise<MattermostUser | null>;
+  log?: { debug?: (msg: string) => void };
 }): Promise<MattermostThreadStarter | null> {
-  const { client, rootPostId, resolveUserInfo } = params;
+  const { client, rootPostId, resolveUserInfo, log } = params;
   const now = Date.now();
 
   // 1. Check positive cache
@@ -129,6 +135,7 @@ export async function resolveMattermostThreadStarter(params: {
   const post = await fetchMattermostPost(client, rootPostId);
 
   if (!post) {
+    log?.debug?.(`mattermost: thread starter fetch failed for rootPostId=${rootPostId}`);
     setNullCached(rootPostId, now);
     return null;
   }
