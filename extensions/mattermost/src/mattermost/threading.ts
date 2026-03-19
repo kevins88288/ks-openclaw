@@ -337,3 +337,30 @@ export async function resolveMattermostReplyContext(params: {
   setCachedReplyContext(parentPostId, result, now);
   return result;
 }
+
+/**
+ * Convenience wrapper for monitor.ts.
+ *
+ * Mattermost only has specific "reply to" context when parentPostId is present
+ * and differs from the thread root id. This helper enforces that guard and
+ * ensures we do not fetch unnecessarily.
+ */
+export async function resolveMattermostReplyContextForPost(params: {
+  client: MattermostClient;
+  threadRootId: string | undefined;
+  parentPostId: string | undefined;
+  resolveUserInfo: (userId: string) => Promise<MattermostUser | null>;
+  log?: { debug?: (msg: string) => void };
+}): Promise<MattermostReplyContext | null> {
+  const rootId = params.threadRootId?.trim();
+  const parentId = params.parentPostId?.trim();
+  if (!rootId || !parentId || parentId === rootId) {
+    return null;
+  }
+  return await resolveMattermostReplyContext({
+    client: params.client,
+    parentPostId: parentId,
+    resolveUserInfo: params.resolveUserInfo,
+    log: params.log,
+  });
+}
