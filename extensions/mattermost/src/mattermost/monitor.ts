@@ -51,7 +51,12 @@ import {
   type MattermostUser,
 } from "./client.js";
 import { readSessionUpdatedAt } from "../../../../src/config/sessions.js";
-import { buildThreadStarterContextFields, resolveMattermostThreadStarter } from "./threading.js";
+import {
+  buildMattermostThreadLabel,
+  buildThreadStarterContextFields,
+  resolveMattermostReplyContext,
+  resolveMattermostThreadStarter,
+} from "./threading.js";
 import {
   buildButtonProps,
   computeInteractionCallbackUrl,
@@ -685,6 +690,19 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
             })
           : null;
 
+        // ── Reply-to context injection (interaction path, Gap 2) ──────────────
+        const interactionReplyToParentId = opts.post.parent_id?.trim() || undefined;
+        const isInteractionSpecificReply = Boolean(
+          interactionReplyToParentId && interactionReplyToParentId !== interactionThreadRootId,
+        );
+        const interactionReplyContext = isInteractionSpecificReply
+          ? await resolveMattermostReplyContext({
+              client,
+              parentPostId: interactionReplyToParentId!,
+              resolveUserInfo,
+            })
+          : null;
+
         const ctxPayload = core.channel.reply.finalizeInboundContext({
           Body: bodyText,
           BodyForAgent: bodyText,
@@ -721,6 +739,15 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
             threadStarter: interactionThreadStarter,
             sessionPreviousTimestamp: interactionSessionPreviousTimestamp,
           }),
+          ThreadLabel: interactionThreadRootId
+            ? buildMattermostThreadLabel({
+                channelName: channelDisplay || channelName || opts.channelId,
+                threadStarter: interactionThreadStarter,
+                threadRootId: interactionThreadRootId,
+              })
+            : undefined,
+          ReplyToBody: interactionReplyContext?.body,
+          ReplyToSender: interactionReplyContext?.sender,
         });
 
         const textLimit = core.channel.text.resolveTextChunkLimit(
@@ -1547,6 +1574,22 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
         })
       : null;
 
+    // ── Reply-to context injection (Gap 2) ────────────────────────────────────
+    // When a user uses the "reply to" gesture on a specific message in Mattermost,
+    // post.parent_id is set and differs from post.root_id. Fetch that parent post
+    // to surface ReplyToBody + ReplyToSender.
+    // If parent_id === root_id or parent_id is absent, this is just a normal thread
+    // reply — no specific quoted message to surface.
+    const replyToParentId = post.parent_id?.trim() || undefined;
+    const isSpecificReply = Boolean(replyToParentId && replyToParentId !== threadRootId);
+    const replyContext = isSpecificReply
+      ? await resolveMattermostReplyContext({
+          client,
+          parentPostId: replyToParentId!,
+          resolveUserInfo,
+        })
+      : null;
+
     const mentionRegexes = core.channel.mentions.buildMentionRegexes(cfg, route.agentId);
     const wasMentioned =
       kind !== "direct" &&
@@ -1737,6 +1780,15 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
         threadStarter,
         sessionPreviousTimestamp: threadSessionPreviousTimestamp,
       }),
+      ThreadLabel: threadRootId
+        ? buildMattermostThreadLabel({
+            channelName: channelDisplay || channelName || channelId,
+            threadStarter,
+            threadRootId,
+          })
+        : undefined,
+      ReplyToBody: replyContext?.body,
+      ReplyToSender: replyContext?.sender,
     });
 
     if (kind === "direct") {

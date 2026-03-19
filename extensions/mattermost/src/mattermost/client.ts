@@ -29,6 +29,7 @@ export type MattermostPost = {
   file_ids?: string[] | null;
   type?: string | null;
   root_id?: string | null;
+  parent_id?: string | null;
   create_at?: number | null;
   props?: Record<string, unknown> | null;
 };

@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MattermostClient, MattermostPost } from "./client.js";
 import {
   __resetMattermostThreadStarterCacheForTest,
+  buildMattermostThreadLabel,
+  buildThreadStarterContextFields,
   resolveMattermostThreadStarter,
+  type MattermostThreadStarter,
 } from "./threading.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -307,5 +310,108 @@ describe("resolveMattermostThreadStarter", () => {
     // Eviction means the API was called again and we got the real post back.
     expect(result).not.toBeNull();
     expect(result?.text).toBe("Back from eviction");
+  });
+});
+
+// ── buildMattermostThreadLabel ────────────────────────────────────────────────
+
+describe("buildMattermostThreadLabel", () => {
+  it("uses thread starter text when available", () => {
+    const starter: MattermostThreadStarter = {
+      text: "Deploy the new release to prod",
+      author: "alice",
+    };
+    const label = buildMattermostThreadLabel({
+      channelName: "deployments",
+      threadStarter: starter,
+      threadRootId: "root-abc123",
+    });
+    expect(label).toBe("Mattermost thread #deployments: Deploy the new release to prod");
+  });
+
+  it("falls back to rootId when thread starter is null", () => {
+    const label = buildMattermostThreadLabel({
+      channelName: "general",
+      threadStarter: null,
+      threadRootId: "root-xyz789",
+    });
+    expect(label).toBe("Mattermost thread #general: root-xyz789");
+  });
+
+  it("falls back to rootId when thread starter has empty text", () => {
+    const starter: MattermostThreadStarter = { text: "", author: "alice" };
+    const label = buildMattermostThreadLabel({
+      channelName: "general",
+      threadStarter: starter,
+      threadRootId: "root-fallback",
+    });
+    expect(label).toBe("Mattermost thread #general: root-fallback");
+  });
+
+  it("truncates starter text to 60 characters", () => {
+    const longText = "A".repeat(100);
+    const starter: MattermostThreadStarter = { text: longText, author: "bob" };
+    const label = buildMattermostThreadLabel({
+      channelName: "announcements",
+      threadStarter: starter,
+      threadRootId: "root-long",
+    });
+    expect(label).toBe(`Mattermost thread #announcements: ${"A".repeat(60)}`);
+  });
+
+  it("truncates rootId fallback to 60 characters when starter is null", () => {
+    const longRootId = "x".repeat(100);
+    const label = buildMattermostThreadLabel({
+      channelName: "ops",
+      threadStarter: null,
+      threadRootId: longRootId,
+    });
+    expect(label).toBe(`Mattermost thread #ops: ${"x".repeat(60)}`);
+  });
+
+  it("returns correct format with channel name in label", () => {
+    const starter: MattermostThreadStarter = { text: "Hello world", author: "carol" };
+    const label = buildMattermostThreadLabel({
+      channelName: "my-channel",
+      threadStarter: starter,
+      threadRootId: "root-1",
+    });
+    expect(label).toMatch(/^Mattermost thread #my-channel: /);
+  });
+});
+
+// ── buildThreadStarterContextFields (Gap 5: IsFirstThreadTurn) ───────────────
+
+describe("buildThreadStarterContextFields — IsFirstThreadTurn", () => {
+  const starter: MattermostThreadStarter = {
+    text: "Thread root content",
+    author: "alice",
+  };
+
+  it("sets IsFirstThreadTurn to true for a new thread session", () => {
+    const result = buildThreadStarterContextFields({
+      threadRootId: "root-1",
+      threadStarter: starter,
+      sessionPreviousTimestamp: undefined,
+    });
+    expect(result.IsFirstThreadTurn).toBe(true);
+  });
+
+  it("does NOT set IsFirstThreadTurn for an existing thread session", () => {
+    const result = buildThreadStarterContextFields({
+      threadRootId: "root-1",
+      threadStarter: starter,
+      sessionPreviousTimestamp: Date.now() - 60_000,
+    });
+    expect(result.IsFirstThreadTurn).toBeUndefined();
+  });
+
+  it("does NOT set IsFirstThreadTurn when not in a thread (no threadRootId)", () => {
+    const result = buildThreadStarterContextFields({
+      threadRootId: undefined,
+      threadStarter: null,
+      sessionPreviousTimestamp: undefined,
+    });
+    expect(result.IsFirstThreadTurn).toBeUndefined();
   });
 });
