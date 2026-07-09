@@ -1,5 +1,7 @@
 // Discord plugin module implements listeners.reactions behavior.
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import { fireAndForgetHook } from "openclaw/plugin-sdk/hook-runtime";
+import { getGlobalHookRunner } from "openclaw/plugin-sdk/plugin-runtime";
 import { resolveAgentRoute } from "openclaw/plugin-sdk/routing";
 import { danger, logVerbose } from "openclaw/plugin-sdk/runtime-env";
 import { enqueueSystemEvent } from "openclaw/plugin-sdk/system-event-runtime";
@@ -399,6 +401,38 @@ async function handleDiscordReactionEvent(
     if (isGuildMessage && guildEntries && Object.keys(guildEntries).length > 0 && !guildInfo) {
       return;
     }
+
+    // Fire reaction_add plugin hook AFTER guild allowlist check, BEFORE channel-level filtering.
+    // This ensures plugins only see reactions from guilds the bot is configured to operate in,
+    // while still seeing reactions from any channel within those guilds (even channels without
+    // explicit channel-level config, such as the approval channel).
+    if (action === "added") {
+      const hookRunner = getGlobalHookRunner();
+      if (hookRunner?.hasHooks("reaction_add")) {
+        fireAndForgetHook(
+          hookRunner.runReactionAdd(
+            {
+              emoji: formatDiscordReactionEmoji(data.emoji),
+              userId: user.id,
+              userName: user.username,
+              channelId: data.channel_id,
+              messageId: data.message_id,
+              guildId: data.guild_id ?? undefined,
+              isBot: Boolean(user.bot),
+              reaction_type: "add",
+            },
+            {
+              channelType: "discord",
+              accountId: params.accountId,
+              guildId: data.guild_id ?? undefined,
+            },
+          ),
+          "discord: reaction_add plugin hook failed",
+          (message) => params.logger.error(danger(message)),
+        );
+      }
+    }
+
     const memberRoleIds = Array.isArray(data.rawMember?.roles)
       ? data.rawMember.roles.map((roleId: string) => roleId)
       : [];

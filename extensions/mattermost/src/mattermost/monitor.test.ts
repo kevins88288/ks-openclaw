@@ -16,6 +16,7 @@ import {
   resolveMattermostReactionChannelId,
   resolveMattermostEffectiveReplyToId,
   resolveMattermostReplyRootId,
+  resolveMattermostSpecificReplyParentId,
   resolveMattermostThreadSessionContext,
   shouldSuppressMattermostDefaultToolProgressMessages,
   shouldUpdateMattermostDraftToolProgress,
@@ -885,6 +886,63 @@ describe("resolveMattermostThreadSessionContext", () => {
       sessionKey: "agent:main:mattermost:default:user-1",
       parentSessionKey: undefined,
     });
+  });
+});
+
+// ── Reply-to context injection ────────────────────────────────────────────
+describe("resolveMattermostSpecificReplyParentId", () => {
+  it("returns undefined when parentId is absent", () => {
+    expect(
+      resolveMattermostSpecificReplyParentId({
+        parentId: undefined,
+        threadRootId: "root-1",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("returns undefined when parentId is empty/whitespace", () => {
+    expect(
+      resolveMattermostSpecificReplyParentId({
+        parentId: "   ",
+        threadRootId: "root-1",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("returns undefined when parentId equals threadRootId (plain thread reply)", () => {
+    expect(
+      resolveMattermostSpecificReplyParentId({
+        parentId: "root-1",
+        threadRootId: "root-1",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("returns parentId when it differs from threadRootId (specific reply)", () => {
+    expect(
+      resolveMattermostSpecificReplyParentId({
+        parentId: "parent-1",
+        threadRootId: "root-1",
+      }),
+    ).toBe("parent-1");
+  });
+
+  it("returns parentId when there is no threadRootId at all", () => {
+    expect(
+      resolveMattermostSpecificReplyParentId({
+        parentId: "parent-1",
+        threadRootId: undefined,
+      }),
+    ).toBe("parent-1");
+  });
+
+  it("trims parentId and threadRootId before comparing", () => {
+    expect(
+      resolveMattermostSpecificReplyParentId({
+        parentId: " parent-1 ",
+        threadRootId: " root-1 ",
+      }),
+    ).toBe("parent-1");
   });
 });
 

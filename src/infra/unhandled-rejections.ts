@@ -2,6 +2,7 @@
 import process from "node:process";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { restoreTerminalState } from "../../packages/terminal-core/src/restore.js";
+import { isFailoverError } from "../agents/failover-error.js";
 import {
   collectErrorGraphCandidates,
   extractErrorCode,
@@ -533,6 +534,16 @@ export function installUnhandledRejectionHandler(): void {
     // Log it but don't crash - these are expected during graceful shutdown
     if (isAbortError(reason)) {
       console.warn("[openclaw] Suppressed AbortError:", formatUncaughtError(reason));
+      return;
+    }
+
+    // FailoverError wraps provider-level errors (auth, rate limit, billing, etc.)
+    // that are already handled by the failover/retry layer — never crash on these.
+    if (isFailoverError(reason)) {
+      console.warn(
+        "[openclaw] Non-fatal provider error (continuing):",
+        formatUncaughtError(reason),
+      );
       return;
     }
 

@@ -70,6 +70,8 @@ import type {
   PluginHookMessageSendingResult,
   PluginHookMessageSentEvent,
   PluginHookName,
+  PluginHookReactionAddEvent,
+  PluginHookReactionContext,
   PluginHookRegistration,
   PluginHookSessionContext,
   PluginHookSessionEndEvent,
@@ -160,6 +162,8 @@ export type {
   PluginHookGatewayContext,
   PluginHookGatewayStartEvent,
   PluginHookGatewayStopEvent,
+  PluginHookReactionAddEvent,
+  PluginHookReactionContext,
   PluginHookBeforeInstallContext,
   PluginHookBeforeInstallEvent,
   PluginHookBeforeInstallResult,
@@ -1536,6 +1540,22 @@ export function createHookRunner(
     return runVoidHook("gateway_stop", event, ctx);
   }
 
+  // =========================================================================
+  // Reaction Hooks
+  // =========================================================================
+
+  /**
+   * Run reaction_add hook.
+   * Fires when a Discord reaction is added to a message.
+   * Runs in parallel (fire-and-forget).
+   */
+  async function runReactionAdd(
+    event: PluginHookReactionAddEvent,
+    ctx: PluginHookReactionContext,
+  ): Promise<void> {
+    return runVoidHook("reaction_add", event, ctx);
+  }
+
   async function runHeartbeatPromptContribution(
     event: PluginHeartbeatPromptContributionEvent,
     ctx: PluginHookAgentContext,
@@ -1665,6 +1685,8 @@ export function createHookRunner(
     // Gateway hooks
     runGatewayStart,
     runGatewayStop,
+    // Reaction hooks
+    runReactionAdd,
     runHeartbeatPromptContribution,
     runCronChanged,
     // Install hooks

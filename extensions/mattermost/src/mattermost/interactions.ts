@@ -1,5 +1,5 @@
 // Mattermost plugin module implements interactions behavior.
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { safeEqualSecret } from "openclaw/plugin-sdk/security-runtime";
 import {
@@ -264,11 +264,17 @@ type MattermostAttachment = {
 /**
  * Sanitize a button ID so Mattermost's action router can match it.
  * Mattermost uses the action ID in the URL path `/api/v4/posts/{id}/actions/{actionId}`
- * and IDs containing hyphens or underscores break the server-side routing.
+ * and IDs containing non-alphanumeric characters (not just hyphens/underscores)
+ * can break the server-side routing.
  * See: https://github.com/mattermost/mattermost/issues/25747
  */
 function sanitizeActionId(id: string): string {
-  return id.replace(/[-_]/g, "");
+  return id.replace(/[^a-zA-Z0-9]/g, "");
+}
+
+/** Short, deterministic hash used as a fallback/collision suffix for action IDs. */
+function shortHash(input: string): string {
+  return createHash("sha256").update(input).digest("hex").slice(0, 8);
 }
 
 export function buildButtonAttachments(params: {
@@ -282,8 +288,35 @@ export function buildButtonAttachments(params: {
   }>;
   text?: string;
 }): MattermostAttachment[] {
+  const seenIds = new Set<string>();
+
   const actions: MattermostButton[] = params.buttons.map((btn) => {
-    const safeId = sanitizeActionId(btn.id);
+    let safeId = sanitizeActionId(btn.id);
+
+    // Guard: sanitization can strip an ID down to nothing (e.g. all-punctuation
+    // IDs like "---" or ":::"). Fall back to a deterministic hash-based ID so
+    // Mattermost's action router always has something to match against.
+    if (safeId === "") {
+      safeId = `action${shortHash(btn.id)}`;
+    }
+
+    // Guard: two distinct raw IDs can sanitize to the same value (e.g. "a:b"
+    // and "ab" both become "ab"). Disambiguate within this message so button
+    // clicks route to the correct action.
+    if (seenIds.has(safeId)) {
+      const candidate = safeId + shortHash(btn.id);
+      if (!seenIds.has(candidate)) {
+        safeId = candidate;
+      } else {
+        let counter = 2;
+        while (seenIds.has(safeId + String(counter))) {
+          counter++;
+        }
+        safeId = safeId + String(counter);
+      }
+    }
+    seenIds.add(safeId);
+
     const context: Record<string, unknown> = {
       action_id: safeId,
       ...btn.context,

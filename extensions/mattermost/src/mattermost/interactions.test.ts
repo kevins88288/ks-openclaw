@@ -447,6 +447,115 @@ describe("buildButtonAttachments", () => {
   });
 });
 
+// ── sanitizeActionId hardening ──────────────────────────────────────────────
+// sanitizeActionId strips all non-alphanumeric characters (not just hyphens
+// and underscores) so IDs like "softgate:approve:0001" don't 404 against
+// Mattermost's action router (mattermost/mattermost#25747). Empty results and
+// within-message collisions get a deterministic hash-based fallback.
+describe("sanitizeActionId (via buildButtonAttachments)", () => {
+  it("strips colons from action ID", () => {
+    const result = buildButtonAttachments({
+      callbackUrl: "http://localhost/cb",
+      buttons: [{ id: "softgate:approve:0001", name: "Approve" }],
+    });
+    const action = requireAction(result);
+    expect(action.id).toBe("softgateapprove0001");
+    expect(action.integration.context.action_id).toBe("softgateapprove0001");
+  });
+
+  it("strips hyphens and underscores (legacy behavior preserved)", () => {
+    const result = buildButtonAttachments({
+      callbackUrl: "http://localhost/cb",
+      buttons: [{ id: "my-action_id", name: "Do It" }],
+    });
+    expect(requireAction(result).id).toBe("myactionid");
+  });
+
+  it("is a no-op on alphanumeric-only IDs", () => {
+    const result = buildButtonAttachments({
+      callbackUrl: "http://localhost/cb",
+      buttons: [{ id: "alreadySafe123", name: "Go" }],
+    });
+    expect(requireAction(result).id).toBe("alreadySafe123");
+  });
+
+  it("sanitizes unicode/non-ascii characters", () => {
+    const result = buildButtonAttachments({
+      callbackUrl: "http://localhost/cb",
+      buttons: [{ id: "héllo", name: "Hello" }],
+    });
+    // "h", "l", "l", "o" remain; "é" is stripped
+    expect(requireAction(result).id).toBe("hllo");
+  });
+
+  it("generates a deterministic hash fallback for an all-punctuation ID", () => {
+    const result = buildButtonAttachments({
+      callbackUrl: "http://localhost/cb",
+      buttons: [{ id: ":::", name: "Broken" }],
+    });
+    const action = requireAction(result);
+    expect(action.id).toMatch(/^action[0-9a-f]{8}$/);
+    expect(action.integration.context.action_id).toBe(action.id);
+  });
+
+  it("generates a deterministic hash fallback for an empty ID", () => {
+    const result = buildButtonAttachments({
+      callbackUrl: "http://localhost/cb",
+      buttons: [{ id: "", name: "Empty" }],
+    });
+    const action = requireAction(result);
+    expect(action.id).toMatch(/^action[0-9a-f]{8}$/);
+    expect(action.integration.context.action_id).toBe(action.id);
+  });
+
+  it("produces only alphanumeric action IDs across a mixed batch", () => {
+    const result = buildButtonAttachments({
+      callbackUrl: "http://localhost/cb",
+      buttons: [
+        { id: "normal", name: "N" },
+        { id: "colon:test", name: "C" },
+        { id: "---", name: "D" },
+        { id: "softgate:approve:0001-watchdog", name: "A" },
+      ],
+    });
+    for (const action of requireActions(result)) {
+      expect(action.id).toMatch(/^[a-zA-Z0-9]+$/);
+    }
+  });
+
+  it("keeps action.id and integration.context.action_id in sync for all buttons", () => {
+    const result = buildButtonAttachments({
+      callbackUrl: "http://localhost/cb",
+      buttons: [
+        { id: "approve:softgate", name: "Approve" },
+        { id: "reject_all", name: "Reject" },
+      ],
+    });
+    for (const action of requireActions(result)) {
+      expect(action.id).toBe(action.integration.context.action_id);
+    }
+  });
+
+  it("disambiguates two IDs that sanitize to the same value within a message", () => {
+    // "a:b" and "ab" both sanitize to "ab" — the second occurrence must not
+    // collide with the first, or clicking either button would route to the
+    // wrong action.
+    const result = buildButtonAttachments({
+      callbackUrl: "http://localhost/cb",
+      buttons: [
+        { id: "a:b", name: "First" },
+        { id: "ab", name: "Second" },
+      ],
+    });
+    const ids = requireActions(result).map((action) => action.id);
+    expect(new Set(ids).size).toBe(2);
+    for (const id of ids) {
+      expect(id).toMatch(/^[a-zA-Z0-9]+$/);
+    }
+    expect(ids[0]).toBe("ab");
+  });
+});
+
 describe("createMattermostInteractionHandler", () => {
   function setInteractionRuntime(
     enqueueSystemEvent: (

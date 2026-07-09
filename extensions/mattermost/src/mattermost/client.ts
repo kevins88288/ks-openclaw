@@ -52,6 +52,7 @@ export const MattermostPostSchema = z
     file_ids: z.array(z.string()).nullable().optional(),
     type: z.string().nullable().optional(),
     root_id: z.string().nullable().optional(),
+    parent_id: z.string().nullable().optional(),
     create_at: z.number().nullable().optional(),
     props: z.record(z.string(), z.unknown()).nullable().optional(),
   })
@@ -638,6 +639,32 @@ export async function updateMattermostPost(
     method: "PUT",
     body: JSON.stringify(payload),
   });
+}
+
+/**
+ * Fetch a single post by ID. Used for thread-starter and reply-to context
+ * injection (fetching the root/parent post content so the agent has context
+ * about what a thread or "reply to" gesture is referring to).
+ * Fail-safe: callers should treat a thrown error as "context unavailable".
+ */
+export async function fetchMattermostPost(
+  client: MattermostClient,
+  postId: string,
+  opts?: { timeoutMs?: number },
+): Promise<MattermostPost | null> {
+  const timeoutMs = opts?.timeoutMs ?? 3000;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await client.request<MattermostPost>(`/posts/${encodeURIComponent(postId)}`, {
+      method: "GET",
+      signal: controller.signal,
+    });
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 export async function deleteMattermostPost(

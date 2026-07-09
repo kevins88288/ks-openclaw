@@ -117,6 +117,12 @@ import { sendMessageMattermost } from "./send.js";
 import { cleanupSlashCommands } from "./slash-commands.js";
 import { deactivateSlashCommands, getSlashCommandState } from "./slash-state.js";
 import {
+  buildMattermostThreadLabel,
+  buildThreadStarterContextFields,
+  resolveMattermostReplyContext,
+  resolveMattermostThreadStarter,
+} from "./thread-context.js";
+import {
   hasMattermostThreadParticipationWithPersistence,
   recordMattermostThreadParticipation,
 } from "./thread-participation.js";
@@ -482,6 +488,28 @@ export function resolveMattermostThreadSessionContext(params: {
   };
 }
 
+/**
+ * Determines the "reply to" parent post ID (quoted-reply context) for a
+ * given inbound post. Mattermost's "reply to" gesture sets post.parent_id;
+ * it is only a *specific* reply worth surfacing when it differs from the
+ * thread root (parent_id === root_id just means "this is a normal thread
+ * reply", not a quote of a specific message).
+ */
+export function resolveMattermostSpecificReplyParentId(params: {
+  parentId?: string | null;
+  threadRootId?: string | null;
+}): string | undefined {
+  const parentId = params.parentId?.trim() || undefined;
+  if (!parentId) {
+    return undefined;
+  }
+  const rootId = params.threadRootId?.trim() || undefined;
+  if (rootId && parentId === rootId) {
+    return undefined;
+  }
+  return parentId;
+}
+
 export function resolveMattermostReactionChannelId(
   payload: Pick<MattermostEventPayload, "broadcast" | "data">,
 ): string | undefined {
@@ -731,6 +759,37 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
         const to =
           kind === "direct" ? `user:${optsLocal.userId}` : `channel:${optsLocal.channelId}`;
         const bodyText = `[Button click: user @${optsLocal.userName} selected "${optsLocal.actionName}"]`;
+
+        // ── Thread starter + reply-to context injection (interaction path) ────
+        const interactionThreadRootId = normalizeOptionalString(optsLocal.post.root_id);
+        const interactionStorePath = core.channel.session.resolveStorePath(cfg.session?.store, {
+          agentId: route.agentId,
+        });
+        const interactionSessionPreviousTimestamp = core.channel.session.readSessionUpdatedAt({
+          storePath: interactionStorePath,
+          sessionKey: threadContext.sessionKey,
+        });
+        const interactionThreadStarter =
+          interactionThreadRootId && !interactionSessionPreviousTimestamp
+            ? await resolveMattermostThreadStarter({
+                client,
+                rootPostId: interactionThreadRootId,
+                resolveUserInfo,
+              })
+            : null;
+        const interactionReplyToParentId = resolveMattermostSpecificReplyParentId({
+          parentId: optsLocal.post.parent_id,
+          threadRootId: interactionThreadRootId,
+        });
+        const interactionReplyContext = interactionReplyToParentId
+          ? await resolveMattermostReplyContext({
+              client,
+              parentPostId: interactionReplyToParentId,
+              expectedChannelId: optsLocal.channelId,
+              resolveUserInfo,
+            })
+          : null;
+
         const ctxPayload = core.channel.reply.finalizeInboundContext({
           Body: bodyText,
           BodyForAgent: bodyText,
@@ -762,6 +821,20 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
           CommandAuthorized: false,
           OriginatingChannel: "mattermost" as const,
           OriginatingTo: to,
+          ...buildThreadStarterContextFields({
+            threadRootId: interactionThreadRootId,
+            threadStarter: interactionThreadStarter,
+            sessionPreviousTimestamp: interactionSessionPreviousTimestamp,
+          }),
+          ThreadLabel: interactionThreadRootId
+            ? buildMattermostThreadLabel({
+                channelName: channelDisplay || channelName || optsLocal.channelId,
+                threadStarter: interactionThreadStarter,
+                threadRootId: interactionThreadRootId,
+              })
+            : undefined,
+          ReplyToBody: interactionReplyContext?.body,
+          ReplyToSender: interactionReplyContext?.sender,
         });
 
         const textLimit = core.channel.text.resolveTextChunkLimit(
@@ -1456,6 +1529,39 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
         const { effectiveReplyToId, sessionKey, parentSessionKey } = threadContext;
         const historyKey = kind === "direct" ? null : sessionKey;
 
+        // ── Thread starter + reply-to context injection ───────────────────────
+        // Fetch the thread root post content only on the first agent turn of a
+        // new thread session; fetch the "reply to" parent post only when the
+        // user used Mattermost's specific-message reply gesture. On any fetch
+        // failure the corresponding context is simply omitted.
+        const threadStorePath = core.channel.session.resolveStorePath(cfg.session?.store, {
+          agentId: route.agentId,
+        });
+        const threadSessionPreviousTimestamp = core.channel.session.readSessionUpdatedAt({
+          storePath: threadStorePath,
+          sessionKey,
+        });
+        const threadStarter =
+          threadRootId && !threadSessionPreviousTimestamp
+            ? await resolveMattermostThreadStarter({
+                client,
+                rootPostId: threadRootId,
+                resolveUserInfo,
+              })
+            : null;
+        const replyToParentId = resolveMattermostSpecificReplyParentId({
+          parentId: post.parent_id,
+          threadRootId,
+        });
+        const replyContext = replyToParentId
+          ? await resolveMattermostReplyContext({
+              client,
+              parentPostId: replyToParentId,
+              expectedChannelId: channelId,
+              resolveUserInfo,
+            })
+          : null;
+
         const mentionRegexes = core.channel.mentions.buildMentionRegexes(cfg, route.agentId);
         const wasMentioned =
           kind !== "direct" &&
@@ -1652,6 +1758,20 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
           OriginatingChannel: "mattermost" as const,
           OriginatingTo: to,
           ...mediaPayload,
+          ...buildThreadStarterContextFields({
+            threadRootId,
+            threadStarter,
+            sessionPreviousTimestamp: threadSessionPreviousTimestamp,
+          }),
+          ThreadLabel: threadRootId
+            ? buildMattermostThreadLabel({
+                channelName: channelDisplay || channelName || channelId,
+                threadStarter,
+                threadRootId,
+              })
+            : undefined,
+          ReplyToBody: replyContext?.body,
+          ReplyToSender: replyContext?.sender,
         });
         const pinnedMainDmOwner =
           kind === "direct"

@@ -1,5 +1,6 @@
 // Covers transient and benign unhandled rejection classifiers.
 import { describe, expect, it } from "vitest";
+import { FailoverError, isFailoverError } from "../agents/failover-error.js";
 import {
   isAbortError,
   isBenignUncaughtExceptionError,
@@ -464,5 +465,28 @@ describe("isTransientUnhandledRejectionError", () => {
     expect(isTransientUnhandledRejectionError(new Error("ENOSPC: no space left on device"))).toBe(
       false,
     );
+  });
+});
+
+describe("FailoverError is handled as non-fatal (gateway must not crash)", () => {
+  // Regression guard for the failover safety net in installUnhandledRejectionHandler:
+  // provider auth/rate-limit errors wrapped in FailoverError are already handled by the
+  // failover/retry layer and must never crash the gateway. The upstream transient-network
+  // classifier does NOT cover these shapes, which is exactly why the handler needs the
+  // isFailoverError early-return.
+  const authFailover = new FailoverError("auth error", { reason: "auth_permanent", status: 403 });
+  const rateLimitFailover = new FailoverError("rate limited", {
+    reason: "rate_limit",
+    status: 429,
+  });
+
+  it("recognizes provider failover errors via isFailoverError", () => {
+    expect(isFailoverError(authFailover)).toBe(true);
+    expect(isFailoverError(rateLimitFailover)).toBe(true);
+  });
+
+  it("is NOT caught by the transient-network classifier (why the dedicated net is required)", () => {
+    expect(isTransientUnhandledRejectionError(authFailover)).toBe(false);
+    expect(isTransientUnhandledRejectionError(rateLimitFailover)).toBe(false);
   });
 });
