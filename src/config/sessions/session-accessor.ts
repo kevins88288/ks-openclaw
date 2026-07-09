@@ -1466,6 +1466,12 @@ export async function commitReplySessionInitialization(params: {
       maintenanceConfig: params.maintenanceConfig,
       onWarn: params.onMaintenanceWarning,
       skipSaveWhenResult: (result) => !result.ok,
+      // The CAS below compares the on-disk entry revision against the
+      // expected-revision snapshot (loaded with skipCache). Read from fresh
+      // disk here too so a divergent writer-owned cache entry cannot cause a
+      // deterministic stale-snapshot conflict loop on shared (e.g. `:main`)
+      // sessions.
+      skipMutableCache: true,
     },
   );
   if (!committed.ok) {

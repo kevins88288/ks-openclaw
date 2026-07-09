@@ -26,7 +26,11 @@ import {
 } from "./disk-budget.js";
 import { extractGeneratedTranscriptSessionId } from "./generated-transcript-session-id.js";
 import { deriveSessionMetaPatch } from "./metadata.js";
-import { resolveExplicitSessionFilePath, resolveSessionFilePath, resolveStorePath } from "./paths.js";
+import {
+  resolveExplicitSessionFilePath,
+  resolveSessionFilePath,
+  resolveStorePath,
+} from "./paths.js";
 import {
   ensureSessionStorePromptBlobsForPersistence,
   isSessionSkillPromptBlobReadable,
@@ -199,6 +203,15 @@ type UpdateSessionStoreOptions<T> = SaveSessionStoreOptions & {
    */
   skipSaveWhenResult?: (result: T) => boolean;
   resolveSingleEntryPersistence?: (result: T) => SingleEntryPersistencePatch | null | undefined;
+  /**
+   * Guarded initialization (optimistic-concurrency CAS on entry revision) must
+   * read the writer store from fresh disk, not the writer-owned object cache.
+   * The expected-revision snapshot is loaded with `skipCache: true`; if the CAS
+   * check here reads a divergent cached entry (e.g. differing `skillsSnapshot`
+   * hydration), the compare fails deterministically and the init loops/throws.
+   * Set this only for such guarded-init writers to keep the CAS meaningful.
+   */
+  skipMutableCache?: boolean;
 };
 
 type SingleEntryPersistencePatch = {
@@ -617,9 +630,12 @@ function storeHasUnsafeUntouchedHydratedSkillPrompts(
   return false;
 }
 
-function loadMutableSessionStoreForWriter(storePath: string): Record<string, SessionEntry> {
+function loadMutableSessionStoreForWriter(
+  storePath: string,
+  skipMutableCache = false,
+): Record<string, SessionEntry> {
   const currentFileStat = getFileStatSnapshot(storePath);
-  if (isSessionStoreCacheEnabled()) {
+  if (!skipMutableCache && isSessionStoreCacheEnabled()) {
     const cached = takeMutableSessionStoreCache({
       storePath,
       mtimeMs: currentFileStat?.mtimeMs,
@@ -1009,7 +1025,7 @@ export async function updateSessionStore<T>(
   opts?: UpdateSessionStoreOptions<T>,
 ): Promise<T> {
   return await runExclusiveSessionStoreWrite(storePath, async () => {
-    const store = loadMutableSessionStoreForWriter(storePath);
+    const store = loadMutableSessionStoreForWriter(storePath, opts?.skipMutableCache);
     const result = await mutator(store);
     if (opts?.skipSaveWhenResult?.(result)) {
       restoreUnchangedSessionStoreCache(storePath, store);
