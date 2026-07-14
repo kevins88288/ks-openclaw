@@ -318,8 +318,10 @@ export function buildButtonAttachments(params: {
     seenIds.add(safeId);
 
     const context: Record<string, unknown> = {
-      action_id: safeId,
       ...btn.context,
+      // The post action ID is authoritative; signing a caller override would
+      // make callbacks fail the post-action validation after sanitization.
+      action_id: safeId,
     };
     const token = generateInteractionToken(context, params.accountId);
     return {

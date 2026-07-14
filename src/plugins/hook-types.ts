@@ -94,6 +94,7 @@ export type PluginHookName =
   | "after_compaction"
   | "before_reset"
   | "inbound_claim"
+  | "channel_pairing_requested"
   | "message_received"
   | "message_sending"
   | "reply_payload_sending"
@@ -123,8 +124,7 @@ export type PluginHookName =
   | "reply_dispatch"
   | "before_install"
   | "before_agent_run"
-  | "resolve_exec_env"
-  | "reaction_add";
+  | "resolve_exec_env";
 
 export const PLUGIN_HOOK_NAMES = [
   "before_model_resolve",
@@ -142,6 +142,7 @@ export const PLUGIN_HOOK_NAMES = [
   "after_compaction",
   "before_reset",
   "inbound_claim",
+  "channel_pairing_requested",
   "message_received",
   "message_sending",
   "reply_payload_sending",
@@ -166,7 +167,6 @@ export const PLUGIN_HOOK_NAMES = [
   "before_install",
   "before_agent_run",
   "resolve_exec_env",
-  "reaction_add",
 ] as const satisfies readonly PluginHookName[];
 
 type MissingPluginHookNames = Exclude<PluginHookName, (typeof PLUGIN_HOOK_NAMES)[number]>;
@@ -180,6 +180,25 @@ export type PluginHookDeprecation = {
   replacement: string;
   reason: string;
   removeAfter?: string;
+};
+
+type PluginHookChannelPairingRequestedEvent = {
+  /** Channel that created the pending pairing request. */
+  channel: string;
+  /** Provider account ID for multi-account channel setups. */
+  accountId?: string;
+  /** Channel-scoped sender ID awaiting operator approval. */
+  senderId: string;
+  /** Short-lived code accepted by `openclaw pairing approve`. */
+  code: string;
+  /** Sender-supplied channel metadata for operator notification/audit. Treat as untrusted. */
+  metadata?: Record<string, string | undefined>;
+};
+
+type PluginHookChannelPairingContext = {
+  channelId: string;
+  accountId?: string;
+  senderId: string;
 };
 
 export const DEPRECATED_PLUGIN_HOOKS = {
@@ -435,6 +454,8 @@ export type PluginHookAfterCompactionEvent = {
   tokenCount?: number;
   compactedCount: number;
   sessionFile?: string;
+  /** Physical session generation replaced by this compaction, when it rotated. */
+  previousSessionId?: string;
 };
 
 export type PluginHookInboundClaimResult = {
@@ -847,33 +868,6 @@ export type PluginHookGatewayStopEvent = {
   reason?: string;
 };
 
-// reaction_add context
-export type PluginHookReactionContext = {
-  channelType: string;
-  accountId?: string;
-  guildId?: string;
-};
-
-// reaction_add event
-export type PluginHookReactionAddEvent = {
-  /** The emoji that was reacted — raw Unicode for standard emoji, "<:name:id>" for custom emoji */
-  emoji: string;
-  /** Discord user ID of the reactor */
-  userId: string;
-  /** Discord username of the reactor */
-  userName?: string;
-  /** Channel where the reaction was added */
-  channelId: string;
-  /** Message that was reacted to */
-  messageId: string;
-  /** Guild ID (undefined for DMs) */
-  guildId?: string;
-  /** Whether the reactor is a bot */
-  isBot: boolean;
-  /** Whether this is a reaction add or remove event */
-  reaction_type: "add" | "remove";
-};
-
 export type PluginHookGatewayCronRunStatus = "ok" | "error" | "skipped";
 
 export type PluginHookGatewayCronDeliveryStatus =
@@ -919,6 +913,11 @@ export type PluginHookGatewayCronJob = {
         kind: "every";
         everyMs?: number;
         anchorMs?: number;
+      }
+    | {
+        kind: "on-exit";
+        command?: string;
+        cwd?: string;
       };
   sessionTarget?: string;
   wakeMode?: string;
@@ -1168,6 +1167,10 @@ export type PluginHookHandlerMap = {
     event: PluginHookInboundClaimEvent,
     ctx: PluginHookInboundClaimContext,
   ) => Promise<PluginHookInboundClaimResult | void> | PluginHookInboundClaimResult | void;
+  channel_pairing_requested: (
+    event: PluginHookChannelPairingRequestedEvent,
+    ctx: PluginHookChannelPairingContext,
+  ) => Promise<void> | void;
   before_dispatch: (
     event: PluginHookBeforeDispatchEvent,
     ctx: PluginHookBeforeDispatchContext,
@@ -1263,10 +1266,6 @@ export type PluginHookHandlerMap = {
   gateway_stop: (
     event: PluginHookGatewayStopEvent,
     ctx: PluginHookGatewayContext,
-  ) => Promise<void> | void;
-  reaction_add: (
-    event: PluginHookReactionAddEvent,
-    ctx: PluginHookReactionContext,
   ) => Promise<void> | void;
   heartbeat_prompt_contribution: (
     event: PluginHeartbeatPromptContributionEvent,

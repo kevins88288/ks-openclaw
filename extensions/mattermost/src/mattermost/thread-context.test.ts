@@ -117,6 +117,26 @@ describe("resolveMattermostThreadStarter", () => {
     expect((client.request as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
   });
 
+  it("does not reuse cached thread starters across clients", async () => {
+    const firstClient = makeClient(makePost({ message: "First account thread" }));
+    const secondClient = makeClient(makePost({ message: "Second account thread" }));
+
+    const first = await resolveMattermostThreadStarter({
+      client: firstClient,
+      rootPostId: "shared-root-id",
+      resolveUserInfo,
+    });
+    const second = await resolveMattermostThreadStarter({
+      client: secondClient,
+      rootPostId: "shared-root-id",
+      resolveUserInfo,
+    });
+
+    expect(first?.text).toBe("First account thread");
+    expect(second?.text).toBe("Second account thread");
+    expect((secondClient.request as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
+  });
+
   it("negatively caches null results within TTL", async () => {
     vi.useFakeTimers();
     const client = makeClient(null);
@@ -353,6 +373,32 @@ describe("resolveMattermostReplyContext", () => {
     expect((client.request as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
   });
 
+  it("does not reuse cached reply context across clients", async () => {
+    const firstClient = makeClient(
+      makePost({ id: "shared-parent-id", message: "First account reply" }),
+    );
+    const secondClient = makeClient(
+      makePost({ id: "shared-parent-id", message: "Second account reply" }),
+    );
+
+    const first = await resolveMattermostReplyContext({
+      client: firstClient,
+      parentPostId: "shared-parent-id",
+      expectedChannelId: "chan-1",
+      resolveUserInfo,
+    });
+    const second = await resolveMattermostReplyContext({
+      client: secondClient,
+      parentPostId: "shared-parent-id",
+      expectedChannelId: "chan-1",
+      resolveUserInfo,
+    });
+
+    expect(first?.body).toBe("First account reply");
+    expect(second?.body).toBe("Second account reply");
+    expect((secondClient.request as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
+  });
+
   it("negatively caches null results within TTL", async () => {
     vi.useFakeTimers();
     const client = makeClient(null);
@@ -397,6 +443,32 @@ describe("resolveMattermostReplyContext", () => {
     });
 
     expect(result).toBeNull();
+  });
+
+  it("does not reuse cached reply context across channels", async () => {
+    const post = makePost({
+      id: "cached-cross-chan-post",
+      channel_id: "chan-source",
+      message: "Message from the source channel",
+    });
+    const client = makeClient(post);
+
+    const sourceResult = await resolveMattermostReplyContext({
+      client,
+      parentPostId: "cached-cross-chan-post",
+      expectedChannelId: "chan-source",
+      resolveUserInfo,
+    });
+    const otherChannelResult = await resolveMattermostReplyContext({
+      client,
+      parentPostId: "cached-cross-chan-post",
+      expectedChannelId: "chan-other",
+      resolveUserInfo,
+    });
+
+    expect(sourceResult?.body).toBe("Message from the source channel");
+    expect(otherChannelResult).toBeNull();
+    expect((client.request as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(2);
   });
 
   it("allows the post when channel_id is absent on the response (fail-open)", async () => {

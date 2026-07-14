@@ -189,6 +189,7 @@ describe("sendMessageMattermost — invalid RootId retry", () => {
     };
     expect(secondCall).not.toHaveProperty("rootId");
     expect(result.messageId).toBe("post-1");
+    expect(result.receipt).not.toHaveProperty("replyToId");
     expect(mockState.loggerWarn).toHaveBeenCalledTimes(1);
   });
 

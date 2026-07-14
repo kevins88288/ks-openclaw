@@ -36,7 +36,7 @@ import {
 import { loadOutboundMediaFromUrl, type OpenClawConfig } from "./runtime-api.js";
 import { isMattermostId, resolveMattermostOpaqueTarget } from "./target-resolution.js";
 
-export type MattermostSendOpts = {
+type MattermostSendOpts = {
   cfg: OpenClawConfig;
   botToken?: string;
   baseUrl?: string;
@@ -57,7 +57,7 @@ export type MattermostSendOpts = {
   onDmChannelResolution?: (resolution: PromiseLike<unknown>) => void;
 };
 
-export type MattermostSendResult = {
+type MattermostSendResult = {
   messageId: string;
   channelId: string;
   receipt: MessageReceipt;
@@ -511,6 +511,7 @@ export async function sendMessageMattermost(
     throw new Error("Mattermost message is empty");
   }
 
+  let effectiveReplyToId = opts.replyToId;
   let post: MattermostPost;
   try {
     post = await createMattermostPost(client, {
@@ -535,6 +536,7 @@ export async function sendMessageMattermost(
         `mattermost send: invalid RootId "${opts.replyToId}" for channel ${channelId}, retrying without threading`,
       );
       post = await createMattermostPost(client, { channelId, message, fileIds, props });
+      effectiveReplyToId = undefined;
     } else {
       throw err;
     }
@@ -554,7 +556,7 @@ export async function sendMessageMattermost(
         buttons: opts.buttons,
         props,
       }),
-      replyToId: opts.replyToId,
+      replyToId: effectiveReplyToId,
     }),
   };
 }

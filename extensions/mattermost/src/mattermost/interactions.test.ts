@@ -368,6 +368,27 @@ describe("buildButtonAttachments", () => {
     expect(ctx["_token"]).toMatch(/^[0-9a-f]{64}$/);
   });
 
+  it("keeps the sanitized action_id authoritative over caller context", () => {
+    const result = buildButtonAttachments({
+      callbackUrl: "http://localhost:18789/cb",
+      buttons: [
+        {
+          id: "approve:release",
+          name: "Approve",
+          context: { action_id: "attacker-controlled", request_id: "request-1" },
+        },
+      ],
+    });
+
+    const action = requireAction(result);
+    const context = action.integration.context;
+    const token = context["_token"] as string;
+    const { _token, ...signedContext } = context;
+    expect(action.id).toBe("approverelease");
+    expect(context.action_id).toBe(action.id);
+    expect(verifyInteractionToken(signedContext, token)).toBe(true);
+  });
+
   it("passes callback URL to each button integration", () => {
     const url = "http://localhost:18789/mattermost/interactions/default";
     const result = buildButtonAttachments({

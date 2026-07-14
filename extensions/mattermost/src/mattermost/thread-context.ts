@@ -11,6 +11,20 @@
 //    (ReplyToBody / ReplyToSender).
 import { fetchMattermostPost, type MattermostClient, type MattermostUser } from "./client.js";
 
+const MATTERMOST_CONTEXT_CLIENT_IDS = new WeakMap<MattermostClient, number>();
+let nextMattermostContextClientId = 1;
+
+function buildClientScopedCacheKey(client: MattermostClient, resourceKey: string): string {
+  let clientId = MATTERMOST_CONTEXT_CLIENT_IDS.get(client);
+  if (clientId === undefined) {
+    clientId = nextMattermostContextClientId++;
+    MATTERMOST_CONTEXT_CLIENT_IDS.set(client, clientId);
+  }
+  // Each account monitor owns its client, so object identity prevents cached
+  // post content crossing server or bot-account permission boundaries.
+  return `${clientId}:${resourceKey}`;
+}
+
 // ── Thread starter ──────────────────────────────────────────────────────────
 
 export type MattermostThreadStarter = {
@@ -102,25 +116,26 @@ export async function resolveMattermostThreadStarter(params: {
 }): Promise<MattermostThreadStarter | null> {
   const { client, rootPostId, resolveUserInfo, log } = params;
   const now = Date.now();
+  const cacheKey = buildClientScopedCacheKey(client, rootPostId);
 
-  const cached = getCachedThreadStarter(rootPostId, now);
+  const cached = getCachedThreadStarter(cacheKey, now);
   if (cached) {
     return cached;
   }
-  if (isThreadStarterNullCached(rootPostId, now)) {
+  if (isThreadStarterNullCached(cacheKey, now)) {
     return null;
   }
 
   const post = await fetchMattermostPost(client, rootPostId);
   if (!post) {
     log?.debug?.(`mattermost: thread starter fetch failed for rootPostId=${rootPostId}`);
-    setThreadStarterNullCached(rootPostId, now);
+    setThreadStarterNullCached(cacheKey, now);
     return null;
   }
 
   const text = post.message?.trim() ?? "";
   if (!text) {
-    setThreadStarterNullCached(rootPostId, now);
+    setThreadStarterNullCached(cacheKey, now);
     return null;
   }
 
@@ -145,7 +160,7 @@ export async function resolveMattermostThreadStarter(params: {
     author,
     timestamp: typeof post.create_at === "number" ? post.create_at : undefined,
   };
-  setCachedThreadStarter(rootPostId, result, now);
+  setCachedThreadStarter(cacheKey, result, now);
   return result;
 }
 
@@ -280,16 +295,19 @@ export async function resolveMattermostReplyContext(params: {
 }): Promise<MattermostReplyContext | null> {
   const { client, parentPostId, expectedChannelId, resolveUserInfo, log } = params;
   const now = Date.now();
+  // Keep channel identity in both positive and negative cache entries so a
+  // parent id cached from one channel cannot bypass the binding check in another.
+  const cacheKey = buildClientScopedCacheKey(client, `${expectedChannelId}:${parentPostId}`);
 
-  const cached = getCachedReplyContext(parentPostId, now);
+  const cached = getCachedReplyContext(cacheKey, now);
   if (cached) return cached;
 
-  if (isReplyContextNullCached(parentPostId, now)) return null;
+  if (isReplyContextNullCached(cacheKey, now)) return null;
 
   const post = await fetchMattermostPost(client, parentPostId);
   if (!post) {
     log?.debug?.(`mattermost: reply context fetch failed for parentPostId=${parentPostId}`);
-    setReplyContextNullCached(parentPostId, now);
+    setReplyContextNullCached(cacheKey, now);
     return null;
   }
 
@@ -300,13 +318,13 @@ export async function resolveMattermostReplyContext(params: {
     log?.debug?.(
       `mattermost: reply context post ${parentPostId} channel ${post.channel_id} !== expected ${expectedChannelId}, skipping`,
     );
-    setReplyContextNullCached(parentPostId, now);
+    setReplyContextNullCached(cacheKey, now);
     return null;
   }
 
   const text = post.message?.trim() ?? "";
   if (!text) {
-    setReplyContextNullCached(parentPostId, now);
+    setReplyContextNullCached(cacheKey, now);
     return null;
   }
 
@@ -327,6 +345,6 @@ export async function resolveMattermostReplyContext(params: {
       : text;
 
   const result: MattermostReplyContext = { body, sender };
-  setCachedReplyContext(parentPostId, result, now);
+  setCachedReplyContext(cacheKey, result, now);
   return result;
 }
