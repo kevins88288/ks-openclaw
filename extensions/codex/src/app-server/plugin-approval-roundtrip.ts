@@ -9,7 +9,12 @@ import {
 import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 import { resolveCodexGatewayTimeoutWithGraceMs } from "./attempt-timeouts.js";
 
-const DEFAULT_CODEX_APPROVAL_TIMEOUT_MS = 120_000;
+// Codex command approvals are surfaced to a human (e.g. Mattermost approval
+// buttons); codex-rs awaits the decision indefinitely (core session.request_command_approval
+// has no timeout), so this bound is purely how long OpenClaw keeps the approval
+// open. 30m matches the exec-approval human-wait bound. Clamped by
+// MAX_PLUGIN_APPROVAL_TIMEOUT_MS gateway-side.
+const DEFAULT_CODEX_APPROVAL_TIMEOUT_MS = 1_800_000;
 const MAX_PLUGIN_APPROVAL_TITLE_LENGTH = 80;
 const MAX_PLUGIN_APPROVAL_DESCRIPTION_LENGTH = 256;
 

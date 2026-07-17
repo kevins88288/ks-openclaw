@@ -48,7 +48,12 @@ export type PluginApprovalResolved = {
 };
 
 export const DEFAULT_PLUGIN_APPROVAL_TIMEOUT_MS = 120_000;
-export const MAX_PLUGIN_APPROVAL_TIMEOUT_MS = 600_000;
+// Ceiling for a requested plugin approval timeout. Matches the exec-approval
+// human-wait bound (DEFAULT_EXEC_APPROVAL_TIMEOUT_MS, 30m) so chat-forwarded
+// approvals (e.g. Codex command approvals shown as Mattermost buttons) stay
+// resolvable long enough for a person to notice and click; a lower ceiling
+// silently clamps longer requests and expires them mid-review.
+export const MAX_PLUGIN_APPROVAL_TIMEOUT_MS = 1_800_000;
 export const PLUGIN_APPROVAL_TITLE_MAX_LENGTH = 80;
 export const PLUGIN_APPROVAL_DESCRIPTION_MAX_LENGTH = 512;
 export const DEFAULT_PLUGIN_APPROVAL_DECISIONS = [
