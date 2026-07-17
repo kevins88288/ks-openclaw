@@ -6,11 +6,7 @@ import {
   resolveChannelApprovalCapability,
 } from "../channels/plugins/index.js";
 import { getRuntimeConfig, type OpenClawConfig } from "../config/config.js";
-import {
-  INTERNAL_MESSAGE_CHANNEL,
-  isDeliverableMessageChannel,
-  normalizeMessageChannel,
-} from "../utils/message-channel.js";
+import { INTERNAL_MESSAGE_CHANNEL, normalizeMessageChannel } from "../utils/message-channel.js";
 
 /** Native approval availability for the channel/account that initiated an approval. */
 export type ExecApprovalInitiatingSurfaceState =
@@ -84,9 +80,6 @@ export function resolveApprovalInitiatingSurfaceState(params: {
     });
   if (state) {
     return { ...state, channel, channelLabel, accountId };
-  }
-  if (isDeliverableMessageChannel(channel)) {
-    return { kind: "enabled", channel, channelLabel, accountId };
   }
   return { kind: "unsupported", channel, channelLabel, accountId };
 }

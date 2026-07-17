@@ -4,7 +4,6 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 const loadConfigMock = vi.hoisted(() => vi.fn());
 const getChannelPluginMock = vi.hoisted(() => vi.fn());
 const listChannelPluginsMock = vi.hoisted(() => vi.fn());
-const isDeliverableMessageChannelMock = vi.hoisted(() => vi.fn());
 const normalizeMessageChannelMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../config/config.js", async () => {
@@ -28,7 +27,6 @@ vi.mock("../channels/plugins/index.js", async () => {
 
 vi.mock("../utils/message-channel.js", () => ({
   INTERNAL_MESSAGE_CHANNEL: "web",
-  isDeliverableMessageChannel: (...args: unknown[]) => isDeliverableMessageChannelMock(...args),
   normalizeMessageChannel: (...args: unknown[]) => normalizeMessageChannelMock(...args),
 }));
 
@@ -51,13 +49,9 @@ describe("resolveExecApprovalInitiatingSurfaceState", () => {
     loadConfigMock.mockReset();
     getChannelPluginMock.mockReset();
     listChannelPluginsMock.mockReset();
-    isDeliverableMessageChannelMock.mockReset();
     normalizeMessageChannelMock.mockReset();
     normalizeMessageChannelMock.mockImplementation((value?: string | null) =>
       typeof value === "string" ? value.trim().toLowerCase() : undefined,
-    );
-    isDeliverableMessageChannelMock.mockImplementation(
-      (value?: string) => value === "slack" || value === "discord" || value === "telegram",
     );
   });
 
@@ -297,12 +291,35 @@ describe("resolveExecApprovalInitiatingSurfaceState", () => {
     });
   });
 
-  it("treats deliverable chat channels without a custom adapter as enabled", () => {
+  it("does not treat a deliverable chat channel as an approval route without a capability", () => {
     expect(resolveExecApprovalInitiatingSurfaceState({ channel: "slack" })).toEqual({
-      kind: "enabled",
+      kind: "unsupported",
       channel: "slack",
       channelLabel: "Slack",
       accountId: undefined,
+    });
+  });
+
+  it("does not treat auth-only channel approval metadata as approval delivery", () => {
+    getChannelPluginMock.mockReturnValue({
+      meta: { label: "Mattermost" },
+      approvalCapability: {
+        authorizeActorAction: () => ({ authorized: true }),
+      },
+    });
+
+    expect(
+      resolveApprovalInitiatingSurfaceState({
+        channel: "mattermost",
+        accountId: "lucius",
+        cfg: {} as never,
+        approvalKind: "plugin",
+      }),
+    ).toEqual({
+      kind: "unsupported",
+      channel: "mattermost",
+      channelLabel: "Mattermost",
+      accountId: "lucius",
     });
   });
 

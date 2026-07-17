@@ -133,7 +133,7 @@ and troubleshooting see the main [FAQ](/help/faq).
     - When native approval cards/buttons are available, that UI is primary; only mention a manual `/approve` command if the tool result says chat approvals are unavailable.
     - Use `approvals.exec` only when prompts must also reach other chats or explicit ops rooms.
     - Use `channels.<channel>.execApprovals.target: "channel"` or `"both"` only when you want approval prompts posted back into the originating room/topic.
-    - Plugin approvals are separate: same-chat `/approve` by default, optional `approvals.plugin` forwarding, and only some native channels keep native handling for those too.
+    - Plugin approvals are separate: use a channel with plugin approval handling or configure `approvals.plugin` forwarding. Only some native channels keep native handling for those too.
 
     Short version: forwarding is for routing, native client config is for richer channel-specific UX.
     See [Exec Approvals](/tools/exec-approvals).
