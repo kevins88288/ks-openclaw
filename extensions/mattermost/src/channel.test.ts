@@ -1,4 +1,5 @@
 // Mattermost tests cover channel plugin behavior.
+import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../runtime-api.js";
 import { createChannelMessageReplyPipeline } from "../runtime-api.js";
@@ -1082,7 +1083,11 @@ describe("mattermostPlugin", () => {
       expect(options.buttons).toBeUndefined();
     });
 
-    it("does not render command action buttons that Mattermost cannot execute", async () => {
+    // Mirror the prod short-hash id derivation (channel.ts mattermostCommandActionId).
+    const expectedCommandActionId = (command: string) =>
+      `cmd${createHash("sha256").update(command).digest("hex").slice(0, 12)}`;
+
+    it("renders command action buttons and carries the command in context", async () => {
       const cfg = createMattermostTestConfig();
 
       await mattermostPlugin.actions?.handleAction?.(
@@ -1095,7 +1100,9 @@ describe("mattermostPlugin", () => {
               blocks: [
                 {
                   type: "buttons",
-                  buttons: [{ label: "Plugins", action: { type: "command", command: "/codex" } }],
+                  buttons: [
+                    { label: "Approve", action: { type: "command", command: "/approve abc allow" } },
+                  ],
                 },
               ],
             },
@@ -1105,8 +1112,22 @@ describe("mattermostPlugin", () => {
         }),
       );
 
-      const options = expectSingleMattermostSend("channel:CHAN1", "Pick\n\n- Plugins: `/codex`");
-      expect(options.buttons).toBeUndefined();
+      const options = expectSingleMattermostSend(
+        "channel:CHAN1",
+        "Pick\n\n- Approve: `/approve abc allow`",
+      );
+      // Visible callback id is a short hash of the command, not the raw command.
+      expect(options.buttons).toStrictEqual([
+        [
+          {
+            id: expectedCommandActionId("/approve abc allow"),
+            text: "Approve",
+            callback_data: expectedCommandActionId("/approve abc allow"),
+            context: { command: "/approve abc allow" },
+            style: undefined,
+          },
+        ],
+      ]);
     });
 
     it("falls back to trimmed replyTo when replyToId is blank", async () => {

@@ -13,6 +13,7 @@ import {
   formatMattermostFinalDeliveryOutcomeLog,
   MattermostRetryableInboundError,
   processMattermostReplayGuardedPost,
+  resolveMattermostButtonDispatchBody,
   resolveMattermostReactionChannelId,
   resolveMattermostEffectiveReplyToId,
   resolveMattermostReplyRootId,
@@ -1072,6 +1073,44 @@ describe("buildMattermostModelPickerSelectMessageSid", () => {
         model: "gpt-4.1",
       }),
     );
+  });
+});
+
+describe("resolveMattermostButtonDispatchBody", () => {
+  it("uses the button command as the inbound body when context.command is present", () => {
+    expect(
+      resolveMattermostButtonDispatchBody({
+        context: { command: "  /approve abc allow  " },
+        userName: "alice",
+        actionName: "Approve",
+      }),
+    ).toStrictEqual({ isCommand: true, body: "/approve abc allow" });
+  });
+
+  it("keeps a descriptive body when no command is present", () => {
+    expect(
+      resolveMattermostButtonDispatchBody({
+        context: { callback_data: "open" },
+        userName: "alice",
+        actionName: "Open",
+      }),
+    ).toStrictEqual({
+      isCommand: false,
+      body: '[Button click: user @alice selected "Open"]',
+    });
+  });
+
+  it("treats a blank command as no command", () => {
+    expect(
+      resolveMattermostButtonDispatchBody({
+        context: { command: "   " },
+        userName: "bob",
+        actionName: "Docs",
+      }),
+    ).toStrictEqual({
+      isCommand: false,
+      body: '[Button click: user @bob selected "Docs"]',
+    });
   });
 });
 

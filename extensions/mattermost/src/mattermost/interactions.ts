@@ -45,7 +45,7 @@ export type MattermostInteractionResponse = {
 };
 
 type MattermostInteractionAuthorizationResult =
-  | { ok: true }
+  | { ok: true; commandAuthorized?: boolean }
   | { ok: false; statusCode?: number; response?: MattermostInteractionResponse };
 
 export type MattermostInteractiveButtonInput = {
@@ -431,6 +431,8 @@ export function createMattermostInteractionHandler(params: {
     actionName: string;
     postId: string;
     post: MattermostPost;
+    context?: Record<string, unknown>;
+    commandAuthorized?: boolean;
   }) => Promise<void>;
   log?: (message: string) => void;
 }): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
@@ -593,12 +595,14 @@ export function createMattermostInteractionHandler(params: {
         `post=${payload.post_id} channel=${payload.channel_id}`,
     );
 
+    let authorizationResult: MattermostInteractionAuthorizationResult | undefined;
     if (params.authorizeButtonClick) {
       try {
         const authorization = await params.authorizeButtonClick({
           payload,
           post: originalPost,
         });
+        authorizationResult = authorization;
         if (!authorization.ok) {
           res.statusCode = authorization.statusCode ?? 200;
           res.setHeader("Content-Type", "application/json");
@@ -703,6 +707,11 @@ export function createMattermostInteractionHandler(params: {
           actionName: clickedButtonName,
           postId: payload.post_id,
           post: originalPost,
+          context: contextWithoutToken,
+          // Only forward command authorization proven by authorizeButtonClick;
+          // absent/denied checks must not let a button-dispatched command run.
+          commandAuthorized:
+            authorizationResult?.ok === true && authorizationResult.commandAuthorized === true,
         });
       } catch (err) {
         log?.(`mattermost interaction: dispatchButtonClick failed: ${String(err)}`);

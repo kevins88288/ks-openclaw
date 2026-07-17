@@ -1011,7 +1011,37 @@ describe("createMattermostInteractionHandler", () => {
       actionName: "Approve",
       postId: "post-1",
       post: fetchedPost,
+      context: { action_id: "approve", __openclaw_channel_id: "chan-1" },
+      commandAuthorized: false,
     });
+  });
+
+  it("forwards button context and proven command authorization to dispatch", async () => {
+    const context = { action_id: "approve", __openclaw_channel_id: "chan-1", command: "/approve x" };
+    const token = generateInteractionToken(context, "acct");
+    const dispatchButtonClick = vi.fn();
+    const fetchedPost = createActionPost();
+    const handler = createMattermostInteractionHandler({
+      client: createMattermostClientMock(async (_path: string, init?: { method?: string }) =>
+        init?.method === "PUT" ? { id: "post-1" } : fetchedPost,
+      ),
+      botUserId: "bot",
+      accountId: "acct",
+      authorizeButtonClick: async () => ({ ok: true, commandAuthorized: true }),
+      dispatchButtonClick,
+    });
+
+    const res = await runHandler(handler, {
+      body: createInteractionBody({ context, token, userName: "alice" }),
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(dispatchButtonClick).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: { action_id: "approve", __openclaw_channel_id: "chan-1", command: "/approve x" },
+        commandAuthorized: true,
+      }),
+    );
   });
 
   it("lets a custom interaction handler short-circuit generic completion updates", async () => {

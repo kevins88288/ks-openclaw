@@ -193,6 +193,29 @@ export class MattermostRetryableInboundError extends Error {
   }
 }
 
+/**
+ * Resolve the synthetic inbound body for a button click. Command-action buttons
+ * carry their slash command in context.command; that command becomes the inbound
+ * body so the native-command path runs it. Every other click stays a descriptive
+ * body for the agent to interpret. isCommand gates CommandSource/CommandAuthorized
+ * upstream; if that gate were dropped a command button would post as plain chat.
+ */
+export function resolveMattermostButtonDispatchBody(params: {
+  context?: Record<string, unknown>;
+  userName: string;
+  actionName: string;
+}): { isCommand: boolean; body: string } {
+  const command =
+    typeof params.context?.command === "string" ? params.context.command.trim() : "";
+  if (command) {
+    return { isCommand: true, body: command };
+  }
+  return {
+    isCommand: false,
+    body: `[Button click: user @${params.userName} selected "${params.actionName}"]`,
+  };
+}
+
 export function buildMattermostModelPickerSelectMessageSid(params: {
   postId: string;
   provider: string;
@@ -687,7 +710,7 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
           hasControlCommand: false,
         });
         if (decision.ok) {
-          return { ok: true };
+          return { ok: true, commandAuthorized: decision.commandAuthorized };
         }
         return {
           ok: false,
@@ -762,7 +785,12 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
         });
         const to =
           kind === "direct" ? `user:${optsLocal.userId}` : `channel:${optsLocal.channelId}`;
-        const bodyText = `[Button click: user @${optsLocal.userName} selected "${optsLocal.actionName}"]`;
+        const dispatchBody = resolveMattermostButtonDispatchBody({
+          context: optsLocal.context,
+          userName: optsLocal.userName,
+          actionName: optsLocal.actionName,
+        });
+        const { isCommand: isCommandDispatch, body: bodyText } = dispatchBody;
 
         // ── Thread starter + reply-to context injection (interaction path) ────
         const interactionThreadRootId = normalizeOptionalString(optsLocal.post.root_id);
@@ -822,7 +850,13 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
           ReplyToId: threadContext.effectiveReplyToId,
           MessageThreadId: threadContext.effectiveReplyToId,
           WasMentioned: true,
-          CommandAuthorized: false,
+          // get-reply's native-slash fast path only executes a command when the
+          // turn is native/authorized (src/auto-reply/reply/get-reply-native-slash-fast-path.ts).
+          // A command button click is an explicit interaction already vetted by
+          // authorizeButtonClick, so mark it native + carry the proven auth bit;
+          // non-command clicks stay unauthorized so nothing is executed by accident.
+          CommandAuthorized: isCommandDispatch ? optsLocal.commandAuthorized === true : false,
+          CommandSource: isCommandDispatch ? ("native" as const) : undefined,
           OriginatingChannel: "mattermost" as const,
           OriginatingTo: to,
           ...buildThreadStarterContextFields({

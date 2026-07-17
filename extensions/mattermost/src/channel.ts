@@ -1,4 +1,5 @@
 // Mattermost plugin module implements channel behavior.
+import { createHash } from "node:crypto";
 import type {
   ChannelMessageActionAdapter,
   ChannelMessageActionName,
@@ -68,13 +69,41 @@ import type { MattermostConfig } from "./types.js";
 
 const loadMattermostChannelRuntime = createLazyRuntimeModule(() => import("./channel.runtime.js"));
 
+/**
+ * Stable short id for a command-action button. Mattermost's action router
+ * sanitizes non-alphanumerics and keys clicks by action id, so a long/raw
+ * command cannot be the visible callback; hash it and carry the full command
+ * in `context.command` instead.
+ */
+function mattermostCommandActionId(command: string): string {
+  return `cmd${createHash("sha256").update(command).digest("hex").slice(0, 12)}`;
+}
+
 function buildMattermostPresentationButtons(presentation: MessagePresentation) {
   return presentation.blocks
     .filter((block) => block.type === "buttons")
     .map((block) =>
       block.buttons.flatMap((button) => {
         if (button.action) {
-          return [];
+          // Only command actions transport to Mattermost; callback/other action
+          // types are dropped (Mattermost cannot round-trip an opaque callback).
+          const command =
+            button.action.type === "command" ? button.action.command.trim() : "";
+          if (!command) {
+            return [];
+          }
+          const actionId = mattermostCommandActionId(command);
+          return [
+            {
+              id: actionId,
+              text: button.label,
+              callback_data: actionId,
+              context: {
+                command,
+              },
+              style: button.style,
+            },
+          ];
         }
         const value = resolveMessagePresentationControlValue(button);
         return value
