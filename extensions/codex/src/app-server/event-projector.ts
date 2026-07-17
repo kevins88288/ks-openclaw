@@ -453,6 +453,23 @@ const MAX_TOOL_OUTPUT_DELTA_MESSAGES_PER_ITEM = 20;
 const TOOL_TRANSCRIPT_OUTPUT_MAX_CHARS = 12_000;
 const MISSING_TOOL_RESULT_ERROR =
   "OpenClaw recorded a native Codex tool.call without a matching tool.result before the turn completed.";
+// Generic per-disposition text for a denied/aborted native approval. Keep these
+// sentences provider/user-agnostic; the terminal reason itself is the only
+// signal callers get about why the tool never ran.
+const APPROVAL_FAILURE_MESSAGES: Record<
+  Exclude<BeforeToolCallFailureDisposition, "blocked">,
+  string
+> = {
+  failed: "Command approval denied.",
+  cancelled: "Command approval cancelled.",
+  timed_out: "Command approval timed out.",
+};
+
+function formatApprovalFailureMessage(
+  disposition: Exclude<BeforeToolCallFailureDisposition, "blocked">,
+): string {
+  return APPROVAL_FAILURE_MESSAGES[disposition] ?? "Command approval failed.";
+}
 const GENERATED_IMAGE_MEDIA_SUBDIR = "tool-image-generation";
 const BYTES_PER_MB = 1024 * 1024;
 // Match OpenClaw's default image media cap for generated image tool outputs.
@@ -647,6 +664,38 @@ export class CodexAppServerEventProjector {
     disposition: Exclude<BeforeToolCallFailureDisposition, "blocked">,
   ): void {
     this.nativeToolLifecycleProjector.recordApprovalFailureDisposition(toolCallId, disposition);
+    // A denied/cancelled/timed-out approval means the native item will never
+    // reach item/completed with real output. Without a terminal result here,
+    // synthesizeMissingToolResults() promotes the still-open tool.call into a
+    // user-visible MISSING_TOOL_RESULT_ERROR even though the turn otherwise
+    // finished cleanly. Close it out immediately with a disposition-specific
+    // message instead.
+    const name =
+      this.toolTranscriptNamesById.get(toolCallId) ?? this.toolTrajectoryNamesById.get(toolCallId);
+    if (!name) {
+      // item/started for this id has not been observed yet, so there is no
+      // transcript/trajectory call to attach a result to. Leave the gap for
+      // the missing-result synthesis path to handle.
+      return;
+    }
+    const text = formatApprovalFailureMessage(disposition);
+    if (!this.toolTranscriptResultIds.has(toolCallId)) {
+      this.recordToolTranscriptResult({ id: toolCallId, name, text, isError: true });
+    }
+    if (!this.toolTrajectoryResultIds.has(toolCallId)) {
+      this.toolTrajectoryResultIds.add(toolCallId);
+      this.options.trajectoryRecorder?.recordEvent("tool.result", {
+        threadId: this.threadId,
+        turnId: this.turnId,
+        itemId: toolCallId,
+        toolCallId,
+        name,
+        status: "failed",
+        isError: true,
+        result: { status: "failed", reason: disposition },
+        output: text,
+      });
+    }
   }
 
   recordNativeToolPreToolUseFailure(failure: CodexNativePreToolUseFailure): void {
@@ -746,9 +795,19 @@ export class CodexAppServerEventProjector {
     const hasDeliverableAssistantOnCompletedTurn =
       this.completedTurn?.status === "completed" &&
       assistantTexts.some((text) => text.trim().length > 0);
+    const interruptedTurn = this.completedTurn?.status === "interrupted";
     this.synthesizeMissingToolResults({
       synthesize: legacyFailClosed,
-      recordPromptError: legacyFailClosed && !hasDeliverableAssistantOnCompletedTurn,
+      // recordNativeToolApprovalFailure() now closes out denied/cancelled/
+      // timed-out approvals with a real terminal result as soon as the
+      // disposition is known, so that race no longer needs this guard. It
+      // stays for the case an interrupt cuts a native item off before Codex
+      // ever emits item/completed for it (no approval failure involved, e.g.
+      // a still-running command killed by cancellation): that item legitimately
+      // never got a result, and the interruption itself is an expected user
+      // cancellation, not a turn failure worth surfacing as a prompt error.
+      recordPromptError:
+        legacyFailClosed && !hasDeliverableAssistantOnCompletedTurn && !interruptedTurn,
     });
     const lastAssistant =
       assistantTexts.length > 0
@@ -2537,7 +2596,6 @@ function readNonNegativeInteger(record: JsonObject, key: string): number | undef
   const value = readNumber(record, key);
   return value !== undefined && Number.isInteger(value) && value >= 0 ? value : undefined;
 }
-
 
 function readCodexErrorNotificationMessage(record: JsonObject): string | undefined {
   const error = record.error;

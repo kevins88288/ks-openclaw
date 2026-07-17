@@ -910,6 +910,40 @@ describe("CodexAppServerEventProjector", () => {
     expect(result.lastAssistant).toBeUndefined();
   });
 
+  it("does not promote unfinished native items from an interrupted turn to a prompt error", async () => {
+    const projector = await createProjector();
+
+    await projector.handleNotification(
+      forCurrentTurn("item/started", {
+        item: {
+          type: "commandExecution",
+          id: "cmd-interrupted",
+          command: "pnpm test",
+          cwd: "/workspace",
+          processId: null,
+          source: "agent",
+          status: "inProgress",
+          commandActions: [],
+          aggregatedOutput: null,
+          exitCode: null,
+          durationMs: null,
+        },
+      }),
+    );
+    await projector.handleNotification(turnWithStatus("interrupted"));
+
+    const result = projector.buildResult(buildEmptyToolTelemetry());
+
+    expect(result.promptError).toBeNull();
+    expect(result.lastToolError).toMatchObject({
+      toolName: "bash",
+      error: expect.stringContaining("without a matching tool.result"),
+    });
+    expect(result.messagesSnapshot).toContainEqual(
+      expect.objectContaining({ role: "toolResult", toolCallId: "cmd-interrupted", isError: true }),
+    );
+  });
+
   it("keeps sparse successful bash output eligible for the no-visible-answer guard", async () => {
     const projector = await createProjector();
 
@@ -3082,6 +3116,157 @@ describe("CodexAppServerEventProjector", () => {
       ]);
     },
   );
+
+  function startedCommandItem(id: string, command = "pnpm test extensions/codex") {
+    return {
+      type: "commandExecution" as const,
+      id,
+      command,
+      cwd: "/workspace",
+      processId: null,
+      source: "agent" as const,
+      status: "inProgress" as const,
+      commandActions: [],
+      aggregatedOutput: null,
+      exitCode: null,
+      durationMs: null,
+    };
+  }
+
+  function findToolResultMessage(messagesSnapshot: unknown[], toolCallId: string) {
+    return messagesSnapshot.find(
+      (message) => requireRecord(message, "message").toolCallId === toolCallId,
+    ) as Record<string, unknown> | undefined;
+  }
+
+  it.each([
+    ["failed" as const, "Command approval denied."],
+    ["cancelled" as const, "Command approval cancelled."],
+    ["timed_out" as const, "Command approval timed out."],
+  ])(
+    "records a terminal tool.result for a %s approval on a completed turn",
+    async (disposition, expectedText) => {
+      const trajectoryRecorder = {
+        filePath: "trajectory.jsonl",
+        recordEvent: vi.fn(),
+        flush: vi.fn(async () => undefined),
+      };
+      const projector = await createProjector(await createParams(), { trajectoryRecorder });
+
+      await projector.handleNotification(
+        forCurrentTurn("item/started", { item: startedCommandItem("cmd-approval-batch") }),
+      );
+      projector.recordNativeToolApprovalFailure("cmd-approval-batch", disposition);
+      await projector.handleNotification(turnCompleted());
+
+      const result = projector.buildResult(buildEmptyToolTelemetry());
+
+      expect(result.promptError).toBeNull();
+      const toolResultMessage = findToolResultMessage(
+        result.messagesSnapshot,
+        "cmd-approval-batch",
+      );
+      expect(toolResultMessage).toBeDefined();
+      expect(toolResultMessage?.isError).toBe(true);
+      const content = requireArray(toolResultMessage?.content, "tool result content");
+      expect(JSON.stringify(content)).toContain(expectedText);
+      expect(trajectoryRecorder.recordEvent).toHaveBeenCalledWith("tool.result", {
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        itemId: "cmd-approval-batch",
+        toolCallId: "cmd-approval-batch",
+        name: "bash",
+        status: "failed",
+        isError: true,
+        result: { status: "failed", reason: disposition },
+        output: expectedText,
+      });
+    },
+  );
+
+  it.each(["completed", "failed"] as const)(
+    "does not synthesize a missing-tool-result error for a denied approval on a %s turn",
+    async (turnStatus) => {
+      const projector = await createProjector();
+
+      await projector.handleNotification(
+        forCurrentTurn("item/started", { item: startedCommandItem("cmd-approval-status") }),
+      );
+      projector.recordNativeToolApprovalFailure("cmd-approval-status", "failed");
+      await projector.handleNotification(turnWithStatus(turnStatus));
+
+      const result = projector.buildResult(buildEmptyToolTelemetry());
+
+      // A "failed" turn status still surfaces its own turn-failure promptError
+      // (set unconditionally in handleTurnCompleted); the fix under test only
+      // guarantees that message is not additionally compounded by the missing
+      // tool.result synthesis path. A "completed" turn with no assistant text
+      // and no other missing results has no promptError at all.
+      if (result.promptError !== null) {
+        expect(result.promptError).not.toContain("without a matching tool.result");
+        expect(result.promptError).not.toContain("missingToolResultCount");
+      }
+      const toolResultMessage = findToolResultMessage(
+        result.messagesSnapshot,
+        "cmd-approval-status",
+      );
+      expect(toolResultMessage?.isError).toBe(true);
+      expect(JSON.stringify(toolResultMessage?.content)).toContain("Command approval denied.");
+    },
+  );
+
+  it("keeps a real result for an approved sibling and a denial result for a declined sibling in the same batch", async () => {
+    const projector = await createProjector();
+
+    await projector.handleNotification(
+      forCurrentTurn("item/started", { item: startedCommandItem("cmd-batch-a") }),
+    );
+    await projector.handleNotification(
+      forCurrentTurn("item/started", { item: startedCommandItem("cmd-batch-b") }),
+    );
+    projector.recordNativeToolApprovalFailure("cmd-batch-b", "failed");
+    await projector.handleNotification(
+      forCurrentTurn("item/completed", {
+        item: {
+          ...startedCommandItem("cmd-batch-a"),
+          status: "completed",
+          aggregatedOutput: "ok",
+          exitCode: 0,
+          durationMs: 5,
+        },
+      }),
+    );
+    await projector.handleNotification(turnCompleted());
+
+    const result = projector.buildResult(buildEmptyToolTelemetry());
+
+    expect(result.promptError).toBeNull();
+    expect(result.lastToolError).toBeUndefined();
+    const resultA = findToolResultMessage(result.messagesSnapshot, "cmd-batch-a");
+    expect(resultA?.isError).toBe(false);
+    expect(JSON.stringify(resultA?.content)).toContain("ok");
+    const resultB = findToolResultMessage(result.messagesSnapshot, "cmd-batch-b");
+    expect(resultB?.isError).toBe(true);
+    expect(JSON.stringify(resultB?.content)).toContain("Command approval denied.");
+  });
+
+  it("still synthesizes MISSING_TOOL_RESULT_ERROR when no approval failure is recorded and the item never completes", async () => {
+    const projector = await createProjector();
+
+    await projector.handleNotification(
+      forCurrentTurn("item/started", { item: startedCommandItem("cmd-orphan") }),
+    );
+    await projector.handleNotification(
+      turnCompleted([{ type: "agentMessage", id: "msg-orphan", text: "   " }]),
+    );
+
+    const result = projector.buildResult(buildEmptyToolTelemetry());
+
+    expect(result.promptError).toContain("without a matching tool.result");
+    const toolResultMessage = findToolResultMessage(result.messagesSnapshot, "cmd-orphan");
+    expect(toolResultMessage?.isError).toBe(true);
+    expect(JSON.stringify(toolResultMessage?.content)).toContain("matching tool.result");
+  });
 
   it("coalesces a native pre-tool failure with the matching item terminal", async () => {
     const projector = await createProjector();
