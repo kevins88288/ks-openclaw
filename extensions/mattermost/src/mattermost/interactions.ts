@@ -18,6 +18,8 @@ import {
 const INTERACTION_MAX_BODY_BYTES = 64 * 1024;
 const INTERACTION_BODY_TIMEOUT_MS = 10_000;
 const SIGNED_CHANNEL_ID_CONTEXT_KEY = "__openclaw_channel_id";
+/** Context key carrying the encoded approval envelope produced by approval-actions.ts. */
+export const MATTERMOST_APPROVAL_CONTEXT_KEY = "__openclaw_approval";
 
 /**
  * Mattermost interactive message callback payload.

@@ -1754,7 +1754,7 @@ describe("mattermostPlugin", () => {
       ]);
     });
 
-    it("keeps typed URL actions on the normal Mattermost text delivery path", async () => {
+    it("keeps typed URL actions on the text fallback path but renders approval buttons", async () => {
       const renderPresentation = requireMattermostRenderPresentation();
       const sendPayload = requireMattermostSendPayload();
       const cfg = createMattermostTestConfig();
@@ -1806,7 +1806,22 @@ describe("mattermostPlugin", () => {
       expect(rendered).toMatchObject({
         text: "- Review: https://example.com/review\n- Open app: https://example.com/app\n- Allow",
       });
-      expect(rendered?.channelData?.mattermost).toBeUndefined();
+      const renderedButtons = rendered?.channelData?.mattermost as
+        | { presentationButtons?: unknown }
+        | undefined;
+      expect(renderedButtons?.presentationButtons).toStrictEqual([
+        [
+          {
+            id: "approval:approval-1",
+            text: "Allow",
+            context: {
+              __openclaw_approval:
+                'openclaw:approval:v1:{"approvalId":"approval-1","approvalKind":"exec","decision":"allow-once"}',
+            },
+            style: undefined,
+          },
+        ],
+      ]);
 
       await sendPayload({
         cfg,
@@ -1819,8 +1834,21 @@ describe("mattermostPlugin", () => {
         "channel:CHAN1",
         "- Review: https://example.com/review\n- Open app: https://example.com/app\n- Allow",
       );
-      expect(options.buttons).toBeUndefined();
-      expect(JSON.stringify(options)).not.toContain("approval-1");
+      expect(options.buttons).toStrictEqual([
+        [
+          {
+            id: "approval:approval-1",
+            text: "Allow",
+            context: {
+              __openclaw_approval:
+                'openclaw:approval:v1:{"approvalId":"approval-1","approvalKind":"exec","decision":"allow-once"}',
+            },
+            style: undefined,
+          },
+        ],
+      ]);
+      // Raw callback data is transport/private: the encoded envelope carries the
+      // approval facts, never the human-typed /approve slash command text.
       expect(JSON.stringify(options)).not.toContain("/approve");
     });
 

@@ -1,6 +1,7 @@
 // Mattermost plugin module registers interactive callback transport handling.
 import { resolveHumanDelayConfig } from "openclaw/plugin-sdk/agent-runtime";
 import { createMattermostInteractionHandler } from "./interactions.js";
+import { createMattermostApprovalInteractionHandler } from "./monitor-approval.js";
 import { authorizeMattermostCommandInvocation } from "./monitor-auth.js";
 import {
   buildMattermostButtonInteractionMessageSid,
@@ -23,6 +24,7 @@ export function registerMattermostInteractions(params: {
   const { monitor } = params;
   const { account, botUserId, cfg, client, core, pairing, resources, runtime } = monitor;
   const { resolveChannelInfo } = resources;
+  const handleApprovalInteraction = createMattermostApprovalInteractionHandler(monitor);
   return registerPluginHttpRoute({
     path: params.interactionPath,
     fallbackPath: "/mattermost/interactions/default",
@@ -34,7 +36,12 @@ export function registerMattermostInteractions(params: {
       allowedSourceIps: params.allowedSourceIps,
       trustedProxies: cfg.gateway?.trustedProxies,
       allowRealIpFallback: cfg.gateway?.allowRealIpFallback === true,
-      handleInteraction: params.handleModelPickerInteraction,
+      // Approval clicks decode/authorize/resolve and terminate here — they
+      // must never fall through to the generic dispatch below, which would
+      // enqueue an agent turn for what is a durable operator decision.
+      handleInteraction: async (opts) =>
+        (await handleApprovalInteraction(opts)) ??
+        (await params.handleModelPickerInteraction(opts)),
       authorizeButtonClick: async ({ payload, post }) => {
         const channelInfo = await resolveChannelInfo(payload.channel_id);
         const allowTextCommands = core.channel.commands.shouldHandleTextCommands({

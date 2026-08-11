@@ -27,6 +27,7 @@ import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { createChannelDirectoryAdapter } from "openclaw/plugin-sdk/directory-runtime";
 import { buildPassiveProbedChannelStatusSummary } from "openclaw/plugin-sdk/extension-shared";
 import {
+  type InteractiveButtonStyle,
   type MessagePresentation,
   normalizeMessagePresentation,
   renderMessagePresentationFallbackText,
@@ -42,6 +43,7 @@ import {
 } from "openclaw/plugin-sdk/status-helpers";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { sanitizeAssistantVisibleText } from "openclaw/plugin-sdk/text-chunking";
+import { encodeMattermostApprovalAction } from "./approval-actions.js";
 import { mattermostApprovalAuth } from "./approval-auth.js";
 import {
   chunkTextForOutbound,
@@ -68,6 +70,7 @@ import {
   resolveMattermostReplyToMode,
   type ResolvedMattermostAccount,
 } from "./mattermost/accounts.js";
+import { MATTERMOST_APPROVAL_CONTEXT_KEY } from "./mattermost/interactions.js";
 import type { MattermostSendResult } from "./mattermost/send.js";
 import { looksLikeMattermostTargetId, normalizeMattermostMessagingTarget } from "./normalize.js";
 import { collectRuntimeConfigAssignments, secretTargetRegistryEntries } from "./secret-contract.js";
@@ -78,12 +81,56 @@ import type { MattermostConfig } from "./types.js";
 
 const loadMattermostChannelRuntime = createLazyRuntimeModule(() => import("./channel.runtime.js"));
 
-function buildMattermostPresentationButtons(presentation: MessagePresentation) {
+// The two Mattermost button kinds carry structurally different signed
+// context shapes (approval envelope vs. legacy callback_data). Naming them
+// as a discriminated union — rather than letting each branch's object
+// literal drive inference — keeps `__openclaw_approval` required only on
+// the approval branch instead of narrowing (or widening) the other one.
+type MattermostCallbackPresentationButton = {
+  id: string;
+  text: string;
+  callback_data: string;
+  context: { callback_data: string };
+  style?: InteractiveButtonStyle;
+};
+
+type MattermostApprovalPresentationButton = {
+  id: string;
+  text: string;
+  context: Record<typeof MATTERMOST_APPROVAL_CONTEXT_KEY, string>;
+  style?: InteractiveButtonStyle;
+};
+
+type MattermostPresentationButton =
+  | MattermostCallbackPresentationButton
+  | MattermostApprovalPresentationButton;
+
+function buildMattermostPresentationButtons(
+  presentation: MessagePresentation,
+): MattermostPresentationButton[][] {
   return presentation.blocks
     .filter((block) => block.type === "buttons")
     .map((block) =>
-      block.buttons.flatMap((button) => {
+      block.buttons.flatMap((button): MattermostPresentationButton[] => {
         if (button.action) {
+          // Only approval actions render as real Mattermost buttons today;
+          // other typed actions (url/web-app/command/callback/question) stay
+          // on the text fallback path — Mattermost cannot round-trip them,
+          // and the envelope goes in signed context (not the id) so raw
+          // callback data never carries product-owned approval facts.
+          const action = resolveMessagePresentationButtonAction(button);
+          if (action?.type === "approval") {
+            return [
+              {
+                id: `approval:${action.approvalId}`,
+                text: button.label,
+                context: {
+                  [MATTERMOST_APPROVAL_CONTEXT_KEY]: encodeMattermostApprovalAction(action),
+                },
+                style: button.style,
+              },
+            ];
+          }
           return [];
         }
         const value = resolveMessagePresentationControlValue(button);
