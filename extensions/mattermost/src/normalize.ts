@@ -2,8 +2,11 @@
 import {
   normalizeMessagePresentation,
   renderMessagePresentationFallbackText,
+  resolveMessagePresentationButtonAction,
   resolveMessagePresentationControlValue,
 } from "openclaw/plugin-sdk/interactive-runtime";
+import { encodeMattermostApprovalAction } from "./approval-actions.js";
+import { MATTERMOST_APPROVAL_CONTEXT_KEY } from "./mattermost/interactions.js";
 import { normalizeLowercaseStringOrEmpty } from "openclaw/plugin-sdk/string-coerce-runtime";
 
 export function resolveMattermostPresentation(params: {
@@ -22,6 +25,19 @@ export function resolveMattermostPresentation(params: {
         .map((block) =>
           block.buttons.flatMap((button) => {
             if (button.action) {
+              const action = resolveMessagePresentationButtonAction(button);
+              if (action?.type === "approval") {
+                return [
+                  {
+                    id: `approval:${action.approvalId}`,
+                    text: button.label,
+                    context: {
+                      [MATTERMOST_APPROVAL_CONTEXT_KEY]: encodeMattermostApprovalAction(action),
+                    },
+                    style: button.style,
+                  },
+                ];
+              }
               return [];
             }
             const value = resolveMessagePresentationControlValue(button);
