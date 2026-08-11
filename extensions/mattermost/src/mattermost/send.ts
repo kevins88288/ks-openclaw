@@ -25,8 +25,10 @@ import {
   fetchMattermostMe,
   fetchMattermostUserByUsername,
   fetchMattermostUserTeams,
+  MattermostApiError,
   normalizeMattermostBaseUrl,
   uploadMattermostFile,
+  type MattermostPost,
   type MattermostUser,
   type CreateDmChannelRetryOptions,
 } from "./client.js";
@@ -488,13 +490,37 @@ export async function sendMessageMattermost(
     throw new Error("Mattermost message is empty");
   }
 
-  const post = await createMattermostPost(client, {
-    channelId,
-    message,
-    rootId: opts.replyToId,
-    fileIds,
-    props,
-  });
+  let effectiveReplyToId = opts.replyToId;
+  let post: MattermostPost;
+  try {
+    post = await createMattermostPost(client, {
+      channelId,
+      message,
+      rootId: opts.replyToId,
+      fileIds,
+      props,
+    });
+  } catch (err) {
+    // Stale/invalid thread root references (e.g. the root post was deleted) make
+    // Mattermost reject the whole post with a 400 "Invalid RootId" error, silently
+    // dropping the reply. Retry once without threading rather than losing the message;
+    // effectiveReplyToId tracks the fallback so the receipt/onDeliveryResult below do
+    // not claim the message landed in-thread when it did not.
+    if (
+      opts.replyToId &&
+      err instanceof MattermostApiError &&
+      err.status === 400 &&
+      /invalid rootid/i.test(err.message)
+    ) {
+      logger.warn?.(
+        `mattermost send: invalid RootId "${opts.replyToId}" for channel ${channelId}, retrying without threading`,
+      );
+      post = await createMattermostPost(client, { channelId, message, fileIds, props });
+      effectiveReplyToId = undefined;
+    } else {
+      throw err;
+    }
+  }
 
   const messageId = post.id ?? "unknown";
   const receipt = createMattermostSendReceipt({
@@ -505,7 +531,7 @@ export async function sendMessageMattermost(
       buttons: opts.buttons,
       props,
     }),
-    replyToId: opts.replyToId,
+    replyToId: effectiveReplyToId,
   });
   const result: MattermostSendResult = {
     messageId,

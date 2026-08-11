@@ -3,6 +3,7 @@ import { isChannelPartialDeliveryError } from "openclaw/plugin-sdk/channel-inbou
 import { expectProvidedCfgSkipsRuntimeLoad } from "openclaw/plugin-sdk/channel-test-helpers";
 import { convertMarkdownTables } from "openclaw/plugin-sdk/text-chunking";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { MattermostApiError } from "./client.js";
 
 let sendMessageMattermost: typeof import("./send.js").sendMessageMattermost;
 let parseMattermostTarget: typeof import("./target-resolution.js").parseMattermostTarget;
@@ -162,18 +163,24 @@ vi.mock("./accounts.js", () => ({
   resolveMattermostAccount: mockState.resolveMattermostAccount,
 }));
 
-vi.mock("./client.js", () => ({
-  createMattermostClient: mockState.createMattermostClient,
-  createMattermostDirectChannelWithRetry: mockState.createMattermostDirectChannelWithRetry,
-  createMattermostPost: mockState.createMattermostPost,
-  fetchMattermostChannelByName: mockState.fetchMattermostChannelByName,
-  fetchMattermostMe: mockState.fetchMattermostMe,
-  fetchMattermostUser: mockState.fetchMattermostUser,
-  fetchMattermostUserTeams: mockState.fetchMattermostUserTeams,
-  fetchMattermostUserByUsername: mockState.fetchMattermostUserByUsername,
-  normalizeMattermostBaseUrl: mockState.normalizeMattermostBaseUrl,
-  uploadMattermostFile: mockState.uploadMattermostFile,
-}));
+vi.mock("./client.js", async () => {
+  // Use the real MattermostApiError class (not a stub) so send.ts's
+  // `err instanceof MattermostApiError` check works against errors built by tests.
+  const actual = await vi.importActual<typeof import("./client.js")>("./client.js");
+  return {
+    MattermostApiError: actual.MattermostApiError,
+    createMattermostClient: mockState.createMattermostClient,
+    createMattermostDirectChannelWithRetry: mockState.createMattermostDirectChannelWithRetry,
+    createMattermostPost: mockState.createMattermostPost,
+    fetchMattermostChannelByName: mockState.fetchMattermostChannelByName,
+    fetchMattermostMe: mockState.fetchMattermostMe,
+    fetchMattermostUser: mockState.fetchMattermostUser,
+    fetchMattermostUserTeams: mockState.fetchMattermostUserTeams,
+    fetchMattermostUserByUsername: mockState.fetchMattermostUserByUsername,
+    normalizeMattermostBaseUrl: mockState.normalizeMattermostBaseUrl,
+    uploadMattermostFile: mockState.uploadMattermostFile,
+  };
+});
 
 vi.mock("../runtime.js", () => ({
   getMattermostRuntime: () => ({
@@ -545,6 +552,130 @@ describe("sendMessageMattermost", () => {
     expect(uploadCall?.[0]).toEqual({});
     expect(uploadCall?.[1]?.channelId).toBe(channelId);
     expect(result.channelId).toBe(channelId);
+  });
+});
+
+describe("sendMessageMattermost invalid RootId retry", () => {
+  beforeEach(async () => {
+    vi.resetModules();
+    mockState.loadConfig.mockReset();
+    mockState.loadConfig.mockReturnValue({});
+    mockState.recordActivity.mockReset();
+    mockState.resolveMattermostAccount.mockReset();
+    mockState.resolveMattermostAccount.mockReturnValue({
+      accountId: "default",
+      botToken: "bot-token",
+      baseUrl: "https://mattermost.example.com",
+      config: {},
+    });
+    mockState.loadOutboundMediaFromUrl.mockReset();
+    mockState.createMattermostClient.mockReset();
+    mockState.createMattermostDirectChannelWithRetry.mockReset();
+    mockState.createMattermostPost.mockReset();
+    mockState.fetchMattermostChannelByName.mockReset();
+    mockState.fetchMattermostMe.mockReset();
+    mockState.fetchMattermostUser.mockReset();
+    mockState.fetchMattermostUserTeams.mockReset();
+    mockState.fetchMattermostUserByUsername.mockReset();
+    mockState.resolveMarkdownTableMode.mockClear();
+    mockState.uploadMattermostFile.mockReset();
+    mockState.createMattermostClient.mockReturnValue({});
+    mockState.createMattermostDirectChannelWithRetry.mockResolvedValue({ id: "dm-channel-1" });
+    mockState.fetchMattermostMe.mockResolvedValue({ id: "bot-user" });
+    mockState.fetchMattermostUserTeams.mockResolvedValue([{ id: "team-1" }]);
+    mockState.fetchMattermostChannelByName.mockResolvedValue({ id: "town-square" });
+    mockState.uploadMattermostFile.mockResolvedValue({ id: "file-1" });
+    ({ sendMessageMattermost } = await import("./send.js"));
+  });
+
+  it("retries once without threading and succeeds when Mattermost rejects a stale RootId", async () => {
+    mockState.createMattermostPost
+      .mockRejectedValueOnce(
+        new MattermostApiError(400, "Mattermost API 400 Bad Request: Invalid RootId parameter."),
+      )
+      .mockResolvedValueOnce({ id: "post-1" });
+    const onDeliveryResult = vi.fn();
+
+    const result = await sendMessageMattermost("channel:town-square", "hello", {
+      cfg: TEST_CFG,
+      replyToId: "stale-root-id",
+      onDeliveryResult,
+    });
+
+    expect(mockState.createMattermostPost).toHaveBeenCalledTimes(2);
+    const firstCall = createMattermostPostCall();
+    expect(firstCall?.[1]?.channelId).toBe("town-square");
+    const firstParams = firstCall?.[1] as { rootId?: string } | undefined;
+    expect(firstParams?.rootId).toBe("stale-root-id");
+    const secondCall = mockCall(mockState.createMattermostPost, "createMattermostPost", 1) as [
+      unknown,
+      { rootId?: string }?,
+    ];
+    expect(secondCall[1]).not.toHaveProperty("rootId");
+
+    expect(result.messageId).toBe("post-1");
+    expect(result.receipt).not.toHaveProperty("replyToId");
+    expect(onDeliveryResult).toHaveBeenCalledTimes(1);
+    expect(onDeliveryResult).toHaveBeenCalledWith(expect.objectContaining({ messageId: "post-1" }));
+    expect(mockState.recordActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it("propagates the error when the un-threaded retry also fails", async () => {
+    mockState.createMattermostPost.mockRejectedValue(
+      new MattermostApiError(400, "Mattermost API 400 Bad Request: Invalid RootId parameter."),
+    );
+
+    await expect(
+      sendMessageMattermost("channel:town-square", "hello", {
+        cfg: TEST_CFG,
+        replyToId: "stale-root-id",
+      }),
+    ).rejects.toThrow("Invalid RootId");
+
+    expect(mockState.createMattermostPost).toHaveBeenCalledTimes(2);
+    expect(mockState.recordActivity).not.toHaveBeenCalled();
+  });
+
+  it("does not retry a non-400 error", async () => {
+    mockState.createMattermostPost.mockRejectedValue(
+      new MattermostApiError(500, "Mattermost API 500 Internal Server Error: something broke"),
+    );
+
+    await expect(
+      sendMessageMattermost("channel:town-square", "hello", {
+        cfg: TEST_CFG,
+        replyToId: "some-thread-id",
+      }),
+    ).rejects.toThrow("Mattermost API 500");
+
+    expect(mockState.createMattermostPost).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry a 400 error that is not an Invalid RootId error", async () => {
+    mockState.createMattermostPost.mockRejectedValue(
+      new MattermostApiError(400, "Mattermost API 400 Bad Request: channel_id is required"),
+    );
+
+    await expect(
+      sendMessageMattermost("channel:town-square", "hello", {
+        cfg: TEST_CFG,
+        replyToId: "some-thread-id",
+      }),
+    ).rejects.toThrow("channel_id is required");
+
+    expect(mockState.createMattermostPost).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry an Invalid RootId error when no replyToId was provided", async () => {
+    mockState.createMattermostPost.mockRejectedValue(
+      new MattermostApiError(400, "Mattermost API 400 Bad Request: Invalid RootId parameter."),
+    );
+
+    await expect(
+      sendMessageMattermost("channel:town-square", "hello", { cfg: TEST_CFG }),
+    ).rejects.toThrow("Invalid RootId");
+
+    expect(mockState.createMattermostPost).toHaveBeenCalledTimes(1);
   });
 });
 

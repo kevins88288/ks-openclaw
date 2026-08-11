@@ -49,8 +49,10 @@ export type PluginApprovalResolved = {
   request?: PluginApprovalRequestPayload;
 };
 
-export const DEFAULT_PLUGIN_APPROVAL_TIMEOUT_MS = 120_000;
-export const MAX_PLUGIN_APPROVAL_TIMEOUT_MS = 600_000;
+// Deliberate 24h default and ceiling: Kevin runs this as an always-on server
+// (single operator) and may not respond to an approval promptly.
+export const DEFAULT_PLUGIN_APPROVAL_TIMEOUT_MS = 86_400_000;
+export const MAX_PLUGIN_APPROVAL_TIMEOUT_MS = 86_400_000;
 export const PLUGIN_APPROVAL_TITLE_MAX_LENGTH = 80;
 export const PLUGIN_APPROVAL_DESCRIPTION_MAX_LENGTH = 512;
 export const PLUGIN_APPROVAL_DETAIL_MAX_LENGTH = 16_384;

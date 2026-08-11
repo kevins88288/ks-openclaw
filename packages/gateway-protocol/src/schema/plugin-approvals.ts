@@ -11,7 +11,9 @@ import { NonEmptyString } from "./primitives.js";
  * title, description, decision set, and timeout limits are part of the public
  * gateway contract.
  */
-const MAX_PLUGIN_APPROVAL_TIMEOUT_MS = 600_000;
+// Deliberate 24h operator ceiling: Kevin runs this as an always-on server and
+// may not respond to an approval promptly.
+const MAX_PLUGIN_APPROVAL_TIMEOUT_MS = 86_400_000;
 const PLUGIN_APPROVAL_TITLE_MAX_LENGTH = 80;
 const PLUGIN_APPROVAL_DESCRIPTION_MAX_LENGTH = 512;
 
