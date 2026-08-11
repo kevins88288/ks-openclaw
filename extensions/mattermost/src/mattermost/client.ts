@@ -31,6 +31,21 @@ const MATTERMOST_REQUEST_TIMEOUT_MS = 30_000;
 // generous text budget but still bound it instead of buffering the whole stream.
 const MATTERMOST_TEXT_RESPONSE_LIMIT_BYTES = 64 * 1024;
 
+/**
+ * Thrown by `MattermostClient.request` on a non-ok HTTP response. Carries the
+ * numeric status so callers (e.g. the invalid-RootId retry in send.ts) can
+ * branch on the real status code instead of regex-parsing the message.
+ */
+export class MattermostApiError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "MattermostApiError";
+    this.status = status;
+  }
+}
+
 export type MattermostFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 type MattermostRequestInit = RequestInit & {
   timeoutMs?: number;
@@ -245,7 +260,8 @@ export function createMattermostClient(params: {
     const res = await fetchImpl(url, { ...init, headers });
     if (!res.ok) {
       const detail = await readMattermostError(res);
-      throw new Error(
+      throw new MattermostApiError(
+        res.status,
         `Mattermost API ${res.status} ${res.statusText}: ${detail || "unknown error"}`,
       );
     }
