@@ -73,6 +73,29 @@
             }
           },
           {
+            "id": "deepseek-v4.1-flash",
+            "name": "DeepSeek V4.1 Flash",
+            "reasoning": true,
+            "input": ["text", "image"],
+            "contextWindow": 1000000,
+            "maxTokens": 384000,
+            "cost": {
+              "input": 0.15,
+              "output": 0.6,
+              "cacheRead": 0.003,
+              "cacheWrite": 0
+            },
+            "compat": {
+              "supportsUsageInStreaming": true,
+              "supportsReasoningEffort": true,
+              "supportedReasoningEfforts": ["low", "high", "max"],
+              "maxTokensField": "max_tokens",
+              "supportsDeveloperRole": false,
+              "supportsStrictMode": false,
+              "codeMode": "capable"
+            }
+          },
+          {
             "id": "kimi-k3",
             "name": "Kimi K3",
             "reasoning": true,

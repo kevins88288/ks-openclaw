@@ -99,7 +99,8 @@ export function createOpencodeGoWrapper(
           baseStreamFn: streamFn,
           thinkingLevel,
           shouldPatchModel: (model) =>
-            model.provider === "opencode-go" && model.id === "deepseek-v4-flash",
+            model.provider === "opencode-go" &&
+            (model.id === "deepseek-v4-flash" || model.id === "deepseek-v4.1-flash"),
           resolveReasoningEffort: (level) =>
             level === "low" ? "low" : level === "max" ? "max" : "high",
         }) ?? streamFn,

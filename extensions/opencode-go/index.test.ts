@@ -349,6 +349,9 @@ describe("opencode-go provider plugin", () => {
     }
     const deepSeekPro = result.provider.models.find((model) => model.id === "deepseek-v4-pro");
     const deepSeekFlash = result.provider.models.find((model) => model.id === "deepseek-v4-flash");
+    const deepSeekFlashV41 = result.provider.models.find(
+      (model) => model.id === "deepseek-v4.1-flash",
+    );
     const modelIds = result.provider.models.map((model) => model.id);
     expect(new Set(modelIds).size).toBe(modelIds.length);
     expect(modelIds.toSorted()).toEqual(ACTIVE_MODEL_IDS.toSorted());
@@ -360,6 +363,13 @@ describe("opencode-go provider plugin", () => {
     });
     expect(deepSeekFlash).toMatchObject({
       provider: "opencode-go",
+      contextWindow: 1_000_000,
+      maxTokens: 384_000,
+      compat: { supportedReasoningEfforts: ["low", "high", "max"] },
+    });
+    expect(deepSeekFlashV41).toMatchObject({
+      provider: "opencode-go",
+      input: ["text", "image"],
       contextWindow: 1_000_000,
       maxTokens: 384_000,
       compat: { supportedReasoningEfforts: ["low", "high", "max"] },
@@ -723,7 +733,7 @@ describe("opencode-go provider plugin", () => {
     }
   });
 
-  it.each(["deepseek-v4-pro", "deepseek-v4-flash"] as const)(
+  it.each(["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4.1-flash"] as const)(
     "disables invalid DeepSeek V4 reasoning_effort off payloads on OpenCode Go for %s",
     async (modelId) => {
       const provider = await registerSingleProviderPlugin(plugin);
@@ -804,17 +814,25 @@ describe("opencode-go provider plugin", () => {
     },
   );
 
-  it.each([
-    ["low", "low"],
-    ["high", "high"],
-    ["max", "max"],
-  ] as const)(
-    "maps OpenCode Go DeepSeek V4 %s thinking to %s reasoning effort",
-    async (thinkingLevel, reasoningEffort) => {
+  it.each(
+    (["deepseek-v4-flash", "deepseek-v4.1-flash"] as const).flatMap((modelId) =>
+      (
+        [
+          ["low", "low"],
+          ["high", "high"],
+          ["max", "max"],
+        ] as const
+      ).map(
+        ([thinkingLevel, reasoningEffort]) => [modelId, thinkingLevel, reasoningEffort] as const,
+      ),
+    ),
+  )(
+    "maps OpenCode Go %s %s thinking to %s reasoning effort",
+    async (modelId, thinkingLevel, reasoningEffort) => {
       const provider = await registerSingleProviderPlugin(plugin);
       const capturedPayloads: Record<string, unknown>[] = [];
       const baseStreamFn = (_model: unknown, _context: unknown, options: unknown) => {
-        const payload = { model: "deepseek-v4-flash" };
+        const payload = { model: modelId };
         (options as { onPayload?: (payload: Record<string, unknown>) => void })?.onPayload?.(
           payload,
         );
@@ -825,20 +843,16 @@ describe("opencode-go provider plugin", () => {
       const streamFn = provider.wrapStreamFn?.({
         streamFn: baseStreamFn as never,
         providerId: "opencode-go",
-        modelId: "deepseek-v4-flash",
+        modelId,
         thinkingLevel,
       } as never);
 
       expect(streamFn).toBeTypeOf("function");
-      await streamFn?.(
-        { provider: "opencode-go", id: "deepseek-v4-flash" } as never,
-        {} as never,
-        {},
-      );
+      await streamFn?.({ provider: "opencode-go", id: modelId } as never, {} as never, {});
 
       expect(capturedPayloads).toEqual([
         {
-          model: "deepseek-v4-flash",
+          model: modelId,
           thinking: { type: "enabled" },
           reasoning_effort: reasoningEffort,
         },

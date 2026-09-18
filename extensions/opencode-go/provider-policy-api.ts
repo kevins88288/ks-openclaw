@@ -37,7 +37,7 @@ export function resolveOpencodeGoThinkingProfile(
   context?: Pick<ProviderDefaultThinkingPolicyContext, "api" | "reasoning" | "compat">,
 ): ProviderThinkingProfile | undefined {
   const normalized = modelId.trim().toLowerCase();
-  if (normalized === "deepseek-v4-flash") {
+  if (normalized === "deepseek-v4-flash" || normalized === "deepseek-v4.1-flash") {
     return {
       levels: [{ id: "off" }, { id: "low" }, { id: "high" }, { id: "max" }],
       defaultLevel: "high",
