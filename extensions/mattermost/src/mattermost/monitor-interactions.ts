@@ -5,6 +5,7 @@ import {
   createMattermostInteractionHandler,
   type MattermostInteractionResponse,
 } from "./interactions.js";
+import { createMattermostApprovalInteractionHandler } from "./monitor-approval.js";
 import { authorizeMattermostCommandInvocation } from "./monitor-auth.js";
 import {
   buildMattermostButtonInteractionMessageSid,
@@ -111,6 +112,7 @@ export function registerMattermostInteractions(params: {
   const { monitor } = params;
   const { account, cfg, client, core, pairing, resources, runtime } = monitor;
   const { resolveChannelInfo } = resources;
+  const handleApprovalInteraction = createMattermostApprovalInteractionHandler(monitor);
   const handleQuestionInteraction = createMattermostQuestionInteractionHandler(monitor);
   return registerPluginHttpRoute({
     path: params.interactionPath,
@@ -123,6 +125,7 @@ export function registerMattermostInteractions(params: {
       trustedProxies: cfg.gateway?.trustedProxies,
       allowRealIpFallback: cfg.gateway?.allowRealIpFallback === true,
       handleInteraction: async (interaction) =>
+        (await handleApprovalInteraction(interaction)) ??
         (await handleQuestionInteraction(interaction)) ??
         (await params.handleModelPickerInteraction(interaction)),
       authorizeButtonClick: async ({ payload }) => {

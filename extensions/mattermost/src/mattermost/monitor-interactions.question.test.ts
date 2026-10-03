@@ -2,6 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const resolveOptionMock = vi.hoisted(() => vi.fn());
 const authorizeMock = vi.hoisted(() => vi.fn());
+const resolveApprovalMock = vi.hoisted(() => vi.fn());
+
+vi.mock("openclaw/plugin-sdk/approval-handler-runtime", () => ({
+  resolveApprovalOverGateway: resolveApprovalMock,
+}));
 type CapturedDispatch = (opts: never) => Promise<{
   update?: { message: string; props?: Record<string, unknown> };
   ephemeral_text?: string;
@@ -222,5 +227,31 @@ describe("mattermost question interactions", () => {
     expect(resolveOptionMock).not.toHaveBeenCalled();
     expect(picker).toHaveBeenCalledTimes(1);
     expect(response?.ephemeral_text).toBe("picker");
+  });
+
+  it("terminates approval clicks before question, picker, or generic dispatch", async () => {
+    const { encodeMattermostApprovalAction, MATTERMOST_APPROVAL_CONTEXT_KEY } =
+      await import("../approval-actions.js");
+    const picker = vi.fn(async () => ({ ephemeral_text: "picker" }));
+    resolveApprovalMock.mockResolvedValue({
+      applied: true,
+      approval: { id: "approval-1", status: "allowed", decision: "allow-once" },
+    });
+
+    const response = await captureDispatcher({ handleModelPickerInteraction: picker })(
+      questionInteraction({
+        [MATTERMOST_APPROVAL_CONTEXT_KEY]: encodeMattermostApprovalAction({
+          type: "approval",
+          approvalId: "approval-1",
+          approvalKind: "exec",
+          decision: "allow-once",
+        }),
+      }),
+    );
+
+    expect(resolveApprovalMock).toHaveBeenCalledTimes(1);
+    expect(response?.update?.message).toBe("Resolved: Allowed once");
+    expect(resolveOptionMock).not.toHaveBeenCalled();
+    expect(picker).not.toHaveBeenCalled();
   });
 });

@@ -9,6 +9,10 @@ import {
   resolveAskUserQuestionOptionIndices,
 } from "openclaw/plugin-sdk/reply-payload";
 import { normalizeLowercaseStringOrEmpty } from "openclaw/plugin-sdk/string-coerce-runtime";
+import {
+  encodeMattermostApprovalAction,
+  MATTERMOST_APPROVAL_CONTEXT_KEY,
+} from "./approval-actions.js";
 
 /** Marks a button context as one this plugin answers through the question Gateway. */
 const MATTERMOST_QUESTION_CONTEXT_KEY = "oc_question";
@@ -90,6 +94,18 @@ export function resolveMattermostPresentation(params: {
                       style: button.style,
                     },
                   ];
+            }
+            if (action?.type === "approval") {
+              return [
+                {
+                  id: `approval:${action.approvalId}`,
+                  text: button.label,
+                  context: {
+                    [MATTERMOST_APPROVAL_CONTEXT_KEY]: encodeMattermostApprovalAction(action),
+                  },
+                  style: button.style,
+                },
+              ];
             }
             if (action) {
               return [];
