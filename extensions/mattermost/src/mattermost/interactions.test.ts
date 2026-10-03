@@ -365,6 +365,63 @@ describe("buildButtonProps attachments", () => {
 
     expect(requireFirstAttachment(result).text).toBe("");
   });
+
+  it("keeps the sanitized action_id authoritative over caller context", () => {
+    const result = buildButtonAttachmentsForTest({
+      callbackUrl: "http://localhost:18789/cb",
+      buttons: [
+        {
+          id: "approve:release",
+          name: "Approve",
+          context: { action_id: "attacker-controlled", request_id: "request-1" },
+        },
+      ],
+    });
+
+    const action = requireAction(result);
+    const { _token, ...signedContext } = action.integration.context;
+    expect(action.id).toBe("approverelease");
+    expect(action.integration.context.action_id).toBe(action.id);
+    expect(verifyInteractionToken(signedContext, _token as string)).toBe(true);
+  });
+});
+
+// Mattermost's action router (mattermost/mattermost#25747) 404s on
+// non-alphanumeric action IDs; empty results and in-message collisions get a
+// deterministic hash-based fallback.
+describe("sanitizeActionId hardening (via buildButtonProps)", () => {
+  const build = (buttons: Array<{ id: string; name: string }>) =>
+    requireActions(buildButtonAttachmentsForTest({ callbackUrl: "http://localhost/cb", buttons }));
+
+  it.each([
+    ["softgate:approve:0001", "softgateapprove0001"],
+    ["my-action_id", "myactionid"],
+    ["alreadySafe123", "alreadySafe123"],
+    ["héllo", "hllo"],
+  ])("sanitizes %s to %s and keeps context in sync", (id, expected) => {
+    const [action] = build([{ id, name: "N" }]);
+    expect(action?.id).toBe(expected);
+    expect(action?.integration.context.action_id).toBe(expected);
+  });
+
+  it("generates a deterministic hash fallback for an all-punctuation ID", () => {
+    const [first] = build([{ id: ":::", name: "Broken" }]);
+    const [second] = build([{ id: ":::", name: "Broken" }]);
+    expect(first?.id).toMatch(/^action[0-9a-f]{8}$/);
+    expect(second?.id).toBe(first?.id);
+  });
+
+  it("disambiguates two IDs that sanitize to the same value within a message", () => {
+    const ids = build([
+      { id: "a:b", name: "First" },
+      { id: "ab", name: "Second" },
+    ]).map((action) => action.id);
+    expect(ids[0]).toBe("ab");
+    expect(new Set(ids).size).toBe(2);
+    for (const id of ids) {
+      expect(id).toMatch(/^[a-zA-Z0-9]+$/);
+    }
+  });
 });
 
 describe("createMattermostInteractionHandler", () => {

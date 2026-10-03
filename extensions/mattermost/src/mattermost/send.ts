@@ -459,13 +459,34 @@ export async function sendMessageMattermost(
     client.assertRequestCurrent?.();
     throw error;
   }
-  const post = await createMattermostPost(client, {
-    channelId,
-    message,
-    rootId: opts.replyToId,
-    fileIds,
-    props,
-  });
+  let effectiveReplyToId = opts.replyToId;
+  let post: Awaited<ReturnType<typeof createMattermostPost>>;
+  try {
+    post = await createMattermostPost(client, {
+      channelId,
+      message,
+      rootId: opts.replyToId,
+      fileIds,
+      props,
+    });
+  } catch (error) {
+    // A deleted/stale thread root makes Mattermost reject the whole post with 400
+    // "Invalid RootId". Retry once un-threaded instead of dropping the reply, and
+    // stop claiming in-thread delivery in the receipt.
+    if (
+      !opts.replyToId ||
+      parseMattermostApiStatus(error) !== 400 ||
+      !/invalid rootid/i.test(error instanceof Error ? error.message : "")
+    ) {
+      throw error;
+    }
+    logger.warn?.(
+      `mattermost send: invalid RootId for channel ${channelId}, retrying without threading`,
+    );
+    client.assertRequestCurrent?.();
+    post = await createMattermostPost(client, { channelId, message, fileIds, props });
+    effectiveReplyToId = undefined;
+  }
 
   const messageId = post.id;
   const receipt = createMattermostSendReceipt({
@@ -476,7 +497,7 @@ export async function sendMessageMattermost(
       buttons: opts.buttons,
       props,
     }),
-    replyToId: opts.replyToId,
+    replyToId: effectiveReplyToId,
   });
   const result: MattermostSendResult = {
     messageId,

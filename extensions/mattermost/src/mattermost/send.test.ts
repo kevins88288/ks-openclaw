@@ -697,6 +697,73 @@ describe("sendMessageMattermost", () => {
     expect(uploadCall?.[1]?.channelId).toBe(channelId);
     expect(result.channelId).toBe(channelId);
   });
+
+  const invalidRootIdError = () =>
+    new Error("Mattermost API 400 Bad Request: Invalid RootId parameter.");
+
+  it("retries once without threading when Mattermost rejects a stale RootId", async () => {
+    mockState.createMattermostPost
+      .mockReset()
+      .mockRejectedValueOnce(invalidRootIdError())
+      .mockResolvedValueOnce({ id: "post-1" });
+    const onDeliveryResult = vi.fn();
+
+    const result = await sendMessageMattermost("channel:town-square", "hello", {
+      cfg: TEST_CFG,
+      replyToId: "stale-root-id",
+      onDeliveryResult,
+    });
+
+    expect(mockState.createMattermostPost).toHaveBeenCalledTimes(2);
+    const firstParams = createMattermostPostCall()?.[1] as { rootId?: string } | undefined;
+    expect(firstParams?.rootId).toBe("stale-root-id");
+    const secondCall = mockCall(mockState.createMattermostPost, "createMattermostPost", 1) as [
+      unknown,
+      { rootId?: string }?,
+    ];
+    expect(secondCall[1]).not.toHaveProperty("rootId");
+    expect(result.messageId).toBe("post-1");
+    expect(result.receipt).not.toHaveProperty("replyToId");
+    expect(onDeliveryResult).toHaveBeenCalledTimes(1);
+    expect(mockState.recordActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it("propagates the error when the un-threaded retry also fails", async () => {
+    mockState.createMattermostPost.mockReset().mockRejectedValue(invalidRootIdError());
+
+    await expect(
+      sendMessageMattermost("channel:town-square", "hello", {
+        cfg: TEST_CFG,
+        replyToId: "stale-root-id",
+      }),
+    ).rejects.toThrow("Invalid RootId");
+    expect(mockState.createMattermostPost).toHaveBeenCalledTimes(2);
+    expect(mockState.recordActivity).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a non-400 error", "Mattermost API 500 Internal Server Error: something broke", "x"],
+    [
+      "a 400 that is not Invalid RootId",
+      "Mattermost API 400 Bad Request: channel_id is required",
+      "x",
+    ],
+    [
+      "Invalid RootId without a replyToId",
+      "Mattermost API 400 Bad Request: Invalid RootId.",
+      undefined,
+    ],
+  ])("does not retry %s", async (_label, message, replyToId) => {
+    mockState.createMattermostPost.mockReset().mockRejectedValue(new Error(message));
+
+    await expect(
+      sendMessageMattermost("channel:town-square", "hello", {
+        cfg: TEST_CFG,
+        ...(replyToId ? { replyToId } : {}),
+      }),
+    ).rejects.toThrow(message);
+    expect(mockState.createMattermostPost).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("parseMattermostTarget", () => {

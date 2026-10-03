@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolveGatewayPort } from "openclaw/plugin-sdk/gateway-config-runtime";
 import { safeEqualSecret } from "openclaw/plugin-sdk/security-runtime";
@@ -230,11 +230,35 @@ type MattermostAttachment = {
 /**
  * Sanitize a button ID so Mattermost's action router can match it.
  * Mattermost uses the action ID in the URL path `/api/v4/posts/{id}/actions/{actionId}`
- * and IDs containing hyphens or underscores break the server-side routing.
+ * and IDs containing any non-alphanumeric character can break the server-side routing.
  * See: https://github.com/mattermost/mattermost/issues/25747
  */
 function sanitizeActionId(id: string): string {
-  return id.replace(/[-_]/g, "");
+  return id.replace(/[^a-zA-Z0-9]/g, "");
+}
+
+function shortHash(input: string): string {
+  return createHash("sha256").update(input).digest("hex").slice(0, 8);
+}
+
+// Sanitizing can empty an ID (":::") or collide two IDs ("a:b" and "ab");
+// either would misroute clicks, so fall back to deterministic hash suffixes.
+function uniqueActionId(rawId: string, seen: Set<string>): string {
+  let safeId = sanitizeActionId(rawId) || `action${shortHash(rawId)}`;
+  if (seen.has(safeId)) {
+    const candidate = safeId + shortHash(rawId);
+    if (seen.has(candidate)) {
+      let counter = 2;
+      while (seen.has(safeId + String(counter))) {
+        counter++;
+      }
+      safeId += String(counter);
+    } else {
+      safeId = candidate;
+    }
+  }
+  seen.add(safeId);
+  return safeId;
 }
 
 export function buildButtonAttachments(params: {
@@ -248,11 +272,14 @@ export function buildButtonAttachments(params: {
   }>;
   text?: string;
 }): MattermostAttachment[] {
+  const seenIds = new Set<string>();
   const actions: MattermostButton[] = params.buttons.map((btn) => {
-    const safeId = sanitizeActionId(btn.id);
+    const safeId = uniqueActionId(btn.id, seenIds);
     const context: Record<string, unknown> = {
-      action_id: safeId,
       ...btn.context,
+      // The post action ID is authoritative; signing a caller override would
+      // fail post-action validation after sanitization.
+      action_id: safeId,
     };
     const token = generateInteractionToken(context, params.accountId);
     return {
