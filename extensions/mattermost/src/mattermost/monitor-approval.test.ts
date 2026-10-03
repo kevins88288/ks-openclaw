@@ -89,9 +89,25 @@ describe("Mattermost approval interaction dispatch", () => {
         senderId: approvedUserId,
       }),
     );
+    // The request details stay; only the buttons are replaced by the outcome.
     expect(response).toEqual({
-      update: { message: "Resolved: Allowed once", props: { attachments: [] } },
+      update: {
+        message: "Approve deploy?",
+        props: { attachments: [{ text: "Resolved: Allowed once" }] },
+      },
     });
+  });
+
+  it.each([
+    ["no approvers", {}],
+    ["wildcard approvers", { allowFrom: ["*"] }],
+  ])("rejects clicks with %s instead of implicit same-chat approval", async (_label, cfg) => {
+    const handler = createMattermostApprovalInteractionHandler(buildMonitor(cfg));
+
+    const response = await handler(clickWith(otherUserId, encoded("allow-once")));
+
+    expect(mocks.resolveApprovalOverGateway).not.toHaveBeenCalled();
+    expect(response).toMatchObject({ ephemeral_text: expect.stringContaining("not authorized") });
   });
 
   it("rejects an unauthorized click without resolving the approval", async () => {

@@ -1,4 +1,5 @@
 // Mattermost plugin module owns native approval-button interactions.
+import { isImplicitSameChatApprovalAuthorization } from "openclaw/plugin-sdk/approval-auth-runtime";
 import type { ApprovalResolveResult } from "openclaw/plugin-sdk/approval-gateway-runtime";
 import { resolveApprovalOverGateway } from "openclaw/plugin-sdk/approval-handler-runtime";
 import { isApprovalNotFoundError } from "openclaw/plugin-sdk/error-runtime";
@@ -56,7 +57,9 @@ export function createMattermostApprovalInteractionHandler(
       action: "approve",
       approvalKind: approval.approvalKind,
     });
-    if (!auth.authorized) {
+    // An empty/wildcard approver set yields implicit same-chat authorization;
+    // a button click only proves channel access, so require an explicit approver.
+    if (!auth.authorized || isImplicitSameChatApprovalAuthorization(auth)) {
       runtime.log?.(
         `mattermost:interaction drop ${approval.approvalKind} approval user=${params.payload.user_id} (not authorized)`,
       );
@@ -76,7 +79,12 @@ export function createMattermostApprovalInteractionHandler(
       });
       const label = resolveMattermostApprovalTerminalLabel(result.approval);
       const prefix = result.applied ? "Resolved" : "Already resolved";
-      return { update: { message: `${prefix}: ${label}`, props: { attachments: [] } } };
+      return {
+        update: {
+          message: params.post.message ?? "",
+          props: { attachments: [{ text: `${prefix}: ${label}` }] },
+        },
+      };
     } catch (error) {
       runtime.log?.(
         `mattermost:interaction approval resolve failed id=${approval.approvalId}: ${String(error)}`,

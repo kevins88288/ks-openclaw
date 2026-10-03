@@ -233,10 +233,6 @@ describe("mattermost question interactions", () => {
     const { encodeMattermostApprovalAction, MATTERMOST_APPROVAL_CONTEXT_KEY } =
       await import("../approval-actions.js");
     const picker = vi.fn(async () => ({ ephemeral_text: "picker" }));
-    resolveApprovalMock.mockResolvedValue({
-      applied: true,
-      approval: { id: "approval-1", status: "allowed", decision: "allow-once" },
-    });
 
     const response = await captureDispatcher({ handleModelPickerInteraction: picker })(
       questionInteraction({
@@ -249,8 +245,9 @@ describe("mattermost question interactions", () => {
       }),
     );
 
-    expect(resolveApprovalMock).toHaveBeenCalledTimes(1);
-    expect(response?.update?.message).toBe("Resolved: Allowed once");
+    // No explicit approvers are configured, so the click is refused, but terminally.
+    expect(response?.ephemeral_text).toContain("not authorized");
+    expect(resolveApprovalMock).not.toHaveBeenCalled();
     expect(resolveOptionMock).not.toHaveBeenCalled();
     expect(picker).not.toHaveBeenCalled();
   });
