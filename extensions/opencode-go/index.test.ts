@@ -786,6 +786,10 @@ describe("opencode-go provider plugin", () => {
     ["deepseek-v4-flash", "low", "low"],
     ["deepseek-v4-flash", "high", "high"],
     ["deepseek-v4-flash", "max", "max"],
+    ["deepseek-v4.1-flash", "off", undefined],
+    ["deepseek-v4.1-flash", "low", "low"],
+    ["deepseek-v4.1-flash", "high", "high"],
+    ["deepseek-v4.1-flash", "max", "max"],
   ] as const)(
     "maps OpenCode Go %s thinking %s to %s reasoning effort",
     async (modelId, thinkingLevel, reasoningEffort) => {
