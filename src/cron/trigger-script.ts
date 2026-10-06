@@ -111,11 +111,19 @@ type AssertTriggerCodesCoverHeadless = [CodeModeFailureCode | "tool_budget_excee
 const assertTriggerCodesCoverHeadless: AssertTriggerCodesCoverHeadless = true;
 void assertTriggerCodesCoverHeadless;
 
-type PreparedTriggerRuntime = {
+type TriggerInvocationRuntime = {
   createTools: (admitted: AdmittedRunContext, signal: AbortSignal) => AnyAgentTool[];
   context: HookContext & { config: OpenClawConfig; agentId: string; sessionKey: string };
-  pluginRegistry?: PluginRegistry;
 };
+
+type PreparedTriggerRuntime = {
+  context: TriggerInvocationRuntime["context"];
+  pluginRegistry?: PluginRegistry;
+} & (
+  | Pick<TriggerInvocationRuntime, "createTools">
+  // Sandbox-bound state is resolved per invocation: containers can be recreated between ticks.
+  | { resolveInvocation: (signal: AbortSignal) => Promise<TriggerInvocationRuntime> }
+);
 
 type CronScriptInvocation = Parameters<NonNullable<CronServiceDeps["evaluateCronTrigger"]>>[0];
 
@@ -202,64 +210,71 @@ async function prepareTriggerRuntime(
       mainKey: config.session?.mainKey,
       cfg: config,
     });
-    const sandbox = await resolveSandboxContext({
-      config,
-      sessionKey,
-      workspaceDir,
-    });
-    params.signal?.throwIfAborted();
-    const effectiveWorkspace =
-      sandbox?.enabled && sandbox.workspaceAccess !== "rw" ? sandbox.workspaceDir : workspaceDir;
     const toolPlan = resolveEmbeddedAttemptToolConstructionPlan({
       toolsEnabled: true,
       toolsAllow: params.toolsAllow,
     });
-    // Bundle MCP tools are source:"mcp", which the headless bridge excludes.
-    // LSP runtimes are session-scoped and intentionally outside trigger v1.
-    const createTools: PreparedTriggerRuntime["createTools"] = (admitted, signal) => {
-      const allTools = toolPlan.constructTools
-        ? createOpenClawCodingTools({
-            agentId,
-            runId: admitted.operationalRunInstance.runId,
-            operationalRunInstance: admitted.operationalRunInstance,
-            abortSignal: signal,
-            exec: { config },
-            sandbox,
-            sessionKey,
-            trigger: "cron",
-            jobId: params.jobId,
-            agentDir,
-            cwd: effectiveWorkspace,
-            workspaceDir: effectiveWorkspace,
-            spawnWorkspaceDir: workspaceDir,
-            config,
-            allowGatewaySubagentBinding: true,
-            includeCoreTools: toolPlan.includeCoreTools,
-            runtimeToolAllowlist: toolPlan.runtimeToolAllowlist,
-            inheritRuntimeToolAllowlist: Boolean(toolPlan.runtimeToolAllowlist),
-            scheduledToolPolicy: resolveScheduledToolPolicyContext({
-              toolsAllow: params.toolsAllow,
-              scheduledToolPolicy: params.scheduledToolPolicy,
-              execTarget: params.execTarget,
-            }),
-            toolConstructionPlan: toolPlan.codingToolConstructionPlan,
-          })
-        : [];
-      return applyEmbeddedAttemptToolsAllow(allTools, params.toolsAllow, {
-        toolMeta: (tool) => getPluginToolMeta(tool),
+    const loopDetection = resolveToolLoopDetectionConfig({ cfg: config, agentId });
+    const resolveInvocation = async (signal: AbortSignal): Promise<TriggerInvocationRuntime> => {
+      const sandbox = await resolveSandboxContext({
+        config,
+        sessionKey,
+        workspaceDir,
       });
-    };
-    const context = {
-      agentId,
-      config,
-      cwd: effectiveWorkspace,
-      workspaceDir: effectiveWorkspace,
-      sessionKey,
-      loopDetection: resolveToolLoopDetectionConfig({ cfg: config, agentId }),
+      signal.throwIfAborted();
+      const effectiveWorkspace =
+        sandbox?.enabled && sandbox.workspaceAccess !== "rw" ? sandbox.workspaceDir : workspaceDir;
+      // Bundle MCP tools are source:"mcp", which the headless bridge excludes.
+      // LSP runtimes are session-scoped and intentionally outside trigger v1.
+      const createTools: TriggerInvocationRuntime["createTools"] = (admitted, toolSignal) => {
+        const allTools = toolPlan.constructTools
+          ? createOpenClawCodingTools({
+              agentId,
+              runId: admitted.operationalRunInstance.runId,
+              operationalRunInstance: admitted.operationalRunInstance,
+              abortSignal: toolSignal,
+              exec: { config },
+              sandbox,
+              sessionKey,
+              trigger: "cron",
+              jobId: params.jobId,
+              agentDir,
+              cwd: effectiveWorkspace,
+              workspaceDir: effectiveWorkspace,
+              spawnWorkspaceDir: workspaceDir,
+              config,
+              allowGatewaySubagentBinding: true,
+              includeCoreTools: toolPlan.includeCoreTools,
+              runtimeToolAllowlist: toolPlan.runtimeToolAllowlist,
+              inheritRuntimeToolAllowlist: Boolean(toolPlan.runtimeToolAllowlist),
+              scheduledToolPolicy: resolveScheduledToolPolicyContext({
+                toolsAllow: params.toolsAllow,
+                scheduledToolPolicy: params.scheduledToolPolicy,
+                execTarget: params.execTarget,
+              }),
+              toolConstructionPlan: toolPlan.codingToolConstructionPlan,
+            })
+          : [];
+        return applyEmbeddedAttemptToolsAllow(allTools, params.toolsAllow, {
+          toolMeta: (tool) => getPluginToolMeta(tool),
+        });
+      };
+      return {
+        createTools,
+        context: {
+          agentId,
+          config,
+          cwd: effectiveWorkspace,
+          workspaceDir: effectiveWorkspace,
+          sessionKey,
+          loopDetection,
+        },
+      };
     };
     return {
-      createTools,
-      context,
+      resolveInvocation,
+      // Admission identity only; tools and workspace come from resolveInvocation.
+      context: { agentId, config, cwd: workspaceDir, workspaceDir, sessionKey, loopDetection },
       ...(pluginRegistry ? { pluginRegistry } : {}),
     };
   };
@@ -391,6 +406,7 @@ function createCronCodeModeRunner(deps: CronTriggerEvaluatorDeps) {
       };
       const runId = `cron-trigger:${params.job.id}:${crypto.randomUUID()}`;
       let runtime: CachedTriggerRuntime | undefined;
+      let invocation: TriggerInvocationRuntime;
       let tools: AnyAgentTool[];
       let admitted: AdmittedRunContext | undefined;
       let assertAdmitted: ReturnType<typeof resolveAdmittedRunActiveAssertion>;
@@ -446,8 +462,23 @@ function createCronCodeModeRunner(deps: CronTriggerEvaluatorDeps) {
           }
           const selected = runtime;
           const authority = admitted;
+          if ("resolveInvocation" in selected) {
+            const pending = withPluginRuntimeRegistryScope(selected.pluginRegistry, () =>
+              selected.resolveInvocation(evaluationScope.signal),
+            );
+            // The deadline scope may settle first; keep a late rejection observed.
+            void pending.catch(() => {});
+            invocation = await evaluationScope.wait(pending);
+            assertActive();
+            if (!runtime.isCurrent()) {
+              throw new PluginInstanceUnavailableError();
+            }
+          } else {
+            invocation = selected;
+          }
+          const current = invocation;
           tools = withPluginRuntimeRegistryScope(selected.pluginRegistry, () =>
-            selected.createTools(authority, evaluationScope.signal),
+            current.createTools(authority, evaluationScope.signal),
           );
           if (!runtime.isCurrent()) {
             throw new PluginInstanceUnavailableError();
@@ -476,8 +507,8 @@ function createCronCodeModeRunner(deps: CronTriggerEvaluatorDeps) {
         }
       }
       const ctx: ToolSearchToolContext = {
-        ...runtime.context,
-        runtimeConfig: runtime.context.config,
+        ...invocation.context,
+        runtimeConfig: invocation.context.config,
         runId,
         catalogRef,
         abortSignal: evaluationScope.signal,
@@ -504,12 +535,13 @@ function createCronCodeModeRunner(deps: CronTriggerEvaluatorDeps) {
       };
 
       const selectedRuntime = runtime;
+      const selectedInvocation = invocation;
       return await withPluginRuntimeRegistryScope(selectedRuntime.pluginRegistry, async () => {
         assertActive();
         registerHeadlessToolSearchCatalog({
           catalogRef,
           tools,
-          hookContext: { ...selectedRuntime.context, runId },
+          hookContext: { ...selectedInvocation.context, runId },
         });
         const remainingWallClockMs = Math.ceil(evaluationScope.deadline - performance.now());
         if (remainingWallClockMs <= 0) {

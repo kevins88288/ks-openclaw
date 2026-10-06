@@ -7,8 +7,9 @@ import { markPluginRegistryRetired } from "../plugins/registry-lifecycle.js";
 import { createPluginRecord } from "../plugins/status.test-helpers.js";
 import { createCronScriptRuntimeFixture as createCronScriptRuntime } from "./trigger-script.test-helpers.js";
 
-type PreparedRuntime = Awaited<
-  ReturnType<NonNullable<Parameters<typeof createCronScriptRuntime>[0]["prepareRuntime"]>>
+type PreparedRuntime = Extract<
+  Awaited<ReturnType<NonNullable<Parameters<typeof createCronScriptRuntime>[0]["prepareRuntime"]>>>,
+  { createTools: unknown }
 >;
 const registries: ReturnType<typeof createEmptyPluginRegistry>[] = [];
 
